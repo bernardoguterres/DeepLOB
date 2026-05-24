@@ -2,6 +2,24 @@
 
 import numpy as np
 import pytest
+import torch
+
+from deeplob.model import DeepLOB
+
+
+@pytest.fixture
+def model():
+    """Instantiate a DeepLOB model in eval mode."""
+    m = DeepLOB()
+    m.eval()
+    return m
+
+
+@pytest.fixture
+def batch():
+    """Standard batch: (8, 1, 100, 40) random tensor."""
+    torch.manual_seed(42)
+    return torch.randn(8, 1, 100, 40)
 
 
 @pytest.fixture

@@ -117,7 +117,7 @@ class DeepLOB(nn.Module):
     Neural Networks for Limit Order Books."
 
     Args:
-        hidden_size: LSTM hidden state size (default 64).
+        hidden_size: LSTM hidden state size (default 256).
         num_lstm_layers: Number of LSTM layers (default 1).
         num_classes: Number of output classes (default 3).
 
@@ -127,7 +127,7 @@ class DeepLOB(nn.Module):
 
     def __init__(
         self,
-        hidden_size: int = 64,
+        hidden_size: int = 256,
         num_lstm_layers: int = 1,
         num_classes: int = 3,
     ) -> None:
