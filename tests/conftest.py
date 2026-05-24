@@ -3,7 +3,9 @@
 import numpy as np
 import pytest
 import torch
+from torch.utils.data import DataLoader, Subset
 
+from deeplob.dataset import LOBDataset
 from deeplob.model import DeepLOB
 
 
@@ -50,3 +52,33 @@ def small_X_y():
     X = rng.random((1000, 40)).astype(np.float32)
     y = rng.integers(0, 3, size=1000).astype(np.int64)
     return X, y
+
+
+@pytest.fixture
+def tiny_loaders():
+    """Tiny synthetic DataLoaders for fast training tests.
+
+    Yields batches of shape ``(B, 1, 100, 40)`` — the channel dim is added
+    by ``LOBDataset.__getitem__``.  Uses ``torch.utils.data.Subset`` for
+    proper Dataset slicing (plain slice indexing on a Dataset is not portable).
+    """
+    rng = np.random.default_rng(42)
+    X = rng.random((300, 100, 40)).astype(np.float32)
+    y = rng.integers(0, 3, size=300).astype(np.int64)
+    dataset = LOBDataset(X, y)
+    # channel dim: dataset.__getitem__ adds it
+    train_loader = DataLoader(Subset(dataset, range(200)), batch_size=16, shuffle=False)
+    test_loader = DataLoader(Subset(dataset, range(200, 300)), batch_size=16, shuffle=False)
+    class_weights = torch.ones(3)
+    return train_loader, test_loader, class_weights
+
+
+@pytest.fixture
+def tiny_model():
+    """Small DeepLOB model for fast tests.
+
+    Seed is fixed before construction so tests that depend on initial weights
+    (e.g. loss-decrease checks) are deterministic.
+    """
+    torch.manual_seed(0)
+    return DeepLOB(hidden_size=16, num_lstm_layers=1)
