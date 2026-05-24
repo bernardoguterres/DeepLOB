@@ -1,0 +1,13 @@
+seed: 42
+
+model:
+  hidden_size: 256
+  lstm_layers: 1
+
+training:
+  lr: 0.0001
+  batch_size: 64
+  window: 100
+  train_days: 7
+  epochs: 50
+  patience: 10
