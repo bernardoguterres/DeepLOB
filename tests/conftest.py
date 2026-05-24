@@ -82,3 +82,27 @@ def tiny_model():
     """
     torch.manual_seed(0)
     return DeepLOB(hidden_size=16, num_lstm_layers=1)
+
+
+@pytest.fixture
+def trained_model():
+    """Small DeepLOB model in eval mode for explanation tests.
+
+    Uses ``hidden_size=16`` to keep forward passes fast.  Seed is fixed
+    so attributions are reproducible across test runs.
+    """
+    torch.manual_seed(42)
+    model = DeepLOB(hidden_size=16)
+    model.eval()
+    return model
+
+
+@pytest.fixture
+def single_sample():
+    """Single LOB sample for Integrated Gradients tests.
+
+    Returns a ``(1, 1, 100, 40)`` random tensor — the exact shape expected
+    by :func:`~deeplob.explain.integrated_gradients`.
+    """
+    torch.manual_seed(0)
+    return torch.randn(1, 1, 100, 40)
