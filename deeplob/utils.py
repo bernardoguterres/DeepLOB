@@ -28,12 +28,16 @@ def load_config(path: str) -> dict:
 
     Raises:
         FileNotFoundError: If *path* does not exist.
+        ValueError: If the file cannot be parsed as valid YAML.
     """
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
-    with p.open() as f:
-        return yaml.safe_load(f)
+    try:
+        with p.open() as f:
+            return yaml.safe_load(f)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Failed to parse config file {path}: {exc}") from exc
 
 
 def set_seed(seed: int = 42) -> None:
@@ -88,17 +92,23 @@ def save_checkpoint(
         epoch: Current epoch number.
         val_f1: Validation macro F1 at this checkpoint.
         path: File path for the checkpoint (``.pt`` file).
+
+    Raises:
+        OSError: If the checkpoint cannot be written to *path*.
     """
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "model_state": model.state_dict(),
-            "optimizer_state": optimizer.state_dict(),
-            "epoch": epoch,
-            "val_f1": val_f1,
-        },
-        path,
-    )
+    try:
+        torch.save(
+            {
+                "model_state": model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+                "epoch": epoch,
+                "val_f1": val_f1,
+            },
+            path,
+        )
+    except OSError as exc:
+        raise OSError(f"Failed to save checkpoint to {path}: {exc}") from exc
 
 
 def load_checkpoint(
@@ -121,10 +131,14 @@ def load_checkpoint(
 
     Raises:
         FileNotFoundError: If *path* does not exist.
+        RuntimeError: If the checkpoint file is corrupt or incompatible.
     """
     if not Path(path).exists():
         raise FileNotFoundError(f"Checkpoint not found: {path}")
-    ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    try:
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError(f"Failed to load checkpoint from {path}: {exc}") from exc
     model.load_state_dict(ckpt["model_state"])
     optimizer.load_state_dict(ckpt["optimizer_state"])
     return int(ckpt["epoch"]), float(ckpt["val_f1"])

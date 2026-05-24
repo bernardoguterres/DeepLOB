@@ -210,3 +210,95 @@ def test_invalid_k_raises_valueerror(synthetic_day_files):
     """k=7 is not a valid horizon and must raise ValueError immediately."""
     with pytest.raises(ValueError, match="k must be one of"):
         load_fi2010_with_boundaries(synthetic_day_files, k=7)
+
+
+# ---------------------------------------------------------------------------
+# 11. load_fi2010_with_boundaries — missing data directory
+# ---------------------------------------------------------------------------
+
+
+def test_load_fi2010_data_dir_not_found():
+    """load_fi2010_with_boundaries raises FileNotFoundError for a non-existent directory."""
+    with pytest.raises(FileNotFoundError, match="data_dir does not exist"):
+        load_fi2010_with_boundaries("/nonexistent/path/to/data", k=1)
+
+
+# ---------------------------------------------------------------------------
+# 12. load_fi2010_with_boundaries — empty directory (no .npy files)
+# ---------------------------------------------------------------------------
+
+
+def test_load_fi2010_no_npy_files(tmp_path):
+    """load_fi2010_with_boundaries raises FileNotFoundError when directory has no .npy files."""
+    with pytest.raises(FileNotFoundError, match="No .npy files found"):
+        load_fi2010_with_boundaries(str(tmp_path), k=1)
+
+
+# ---------------------------------------------------------------------------
+# 13. time_split — train_days too large
+# ---------------------------------------------------------------------------
+
+
+def test_time_split_too_many_train_days(synthetic_day_files):
+    """time_split raises ValueError when train_days >= len(boundaries)."""
+    X, y, boundaries = load_fi2010_with_boundaries(synthetic_day_files, k=1)
+    with pytest.raises(ValueError, match="train_days"):
+        time_split(X, y, boundaries, train_days=len(boundaries))
+
+
+# ---------------------------------------------------------------------------
+# 14. make_windows — window larger than data
+# ---------------------------------------------------------------------------
+
+
+def test_make_windows_window_too_large(small_X_y):
+    """make_windows raises ValueError when window > len(X)."""
+    X, y = small_X_y
+    with pytest.raises(ValueError, match="window"):
+        make_windows(X, y, window=len(X) + 1)
+
+
+# ---------------------------------------------------------------------------
+# 15. LOBDataset — __len__ returns correct count
+# ---------------------------------------------------------------------------
+
+
+def test_lob_dataset_len(small_X_y):
+    """LOBDataset.__len__ must equal the number of windowed samples."""
+    X, y = small_X_y
+    X_w, y_w = make_windows(X, y, window=100)
+    dataset = LOBDataset(X_w, y_w)
+    assert len(dataset) == len(y_w), f"Expected {len(y_w)}, got {len(dataset)}"
+
+
+# ---------------------------------------------------------------------------
+# 16. get_dataloaders — integration (synthetic data, real pipeline)
+# ---------------------------------------------------------------------------
+
+
+def test_get_dataloaders_integration(synthetic_day_files):
+    """get_dataloaders returns two DataLoaders and class_weights tensor of shape (3,)."""
+    from deeplob.dataset import get_dataloaders
+
+    train_loader, test_loader, class_weights = get_dataloaders(
+        data_dir=synthetic_day_files,
+        k=1,
+        batch_size=32,
+        window=100,
+        train_days=7,
+    )
+
+    assert class_weights.shape == (
+        3,
+    ), f"Expected class_weights shape (3,), got {class_weights.shape}"
+    assert class_weights.dtype == torch.float32
+
+    # Verify train batch shapes
+    x_batch, y_batch = next(iter(train_loader))
+    assert x_batch.shape[1:] == (
+        1,
+        100,
+        40,
+    ), f"Expected batch shape (*, 1, 100, 40), got {x_batch.shape}"
+    assert x_batch.dtype == torch.float32
+    assert y_batch.dtype == torch.int64

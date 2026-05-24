@@ -5,11 +5,16 @@ A ``StaticPredictor`` helper returns fixed logits so that predictions are
 fully deterministic without needing a trained model.
 """
 
+import json
+from unittest.mock import patch
+
 import torch
 import torch.nn as nn
 from sklearn.metrics import accuracy_score, f1_score
 
-from deeplob.evaluate import PAPER_BENCHMARKS, benchmark_table, evaluate
+from deeplob.evaluate import PAPER_BENCHMARKS, benchmark_table, evaluate, run_evaluation
+from deeplob.model import DeepLOB
+from deeplob.utils import save_checkpoint
 
 # ---------------------------------------------------------------------------
 # Helper: deterministic model that always returns pre-set logits
@@ -169,3 +174,87 @@ def test_per_class_f1_length():
         f"Expected per_class_f1 to have length 3, got {len(result['per_class_f1'])}: "
         f"{result['per_class_f1']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 6. benchmark_table — k not in PAPER_BENCHMARKS (paper defaults to 0)
+# ---------------------------------------------------------------------------
+
+
+def test_benchmark_table_unknown_horizon():
+    """benchmark_table handles k values absent from PAPER_BENCHMARKS without crashing.
+
+    When paper=0.0 the delta falls back to 0.0% (no division by zero).
+    """
+    table = benchmark_table({99: 0.75})
+    assert "99" in table, "Horizon k=99 not found in table"
+    assert "+0.0%" in table, "Expected '+0.0%' delta when paper benchmark is 0"
+
+
+# ---------------------------------------------------------------------------
+# 7. run_evaluation — no checkpoints → no results.json created
+# ---------------------------------------------------------------------------
+
+_EVAL_CONFIG = """\
+seed: 42
+model:
+  hidden_size: 4
+  lstm_layers: 1
+training:
+  lr: 0.001
+  batch_size: 32
+  window: 100
+  train_days: 7
+  epochs: 2
+  patience: 10
+data:
+  horizons: [1]
+"""
+
+
+def test_run_evaluation_no_checkpoints(tmp_path):
+    """run_evaluation silently skips and creates no results.json when no checkpoints exist."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_EVAL_CONFIG)
+    empty_dir = tmp_path / "empty_outputs"
+    empty_dir.mkdir()
+
+    run_evaluation(str(config_path), "unused_data_dir", checkpoint_dir=str(empty_dir))
+
+    assert not (
+        empty_dir / "results.json"
+    ).exists(), "results.json should not exist when no checkpoints were found"
+
+
+# ---------------------------------------------------------------------------
+# 8. run_evaluation — checkpoint present → results.json written with correct keys
+# ---------------------------------------------------------------------------
+
+
+def test_run_evaluation_saves_results_json(tmp_path, tiny_loaders):
+    """run_evaluation writes results.json with per-k metric dicts when a checkpoint exists."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_EVAL_CONFIG)
+    ckpt_dir = tmp_path / "outputs"
+    ckpt_dir.mkdir()
+
+    # Write a real (tiny) checkpoint so load_checkpoint succeeds
+    model = DeepLOB(hidden_size=4)
+    optimizer = torch.optim.Adam(model.parameters())
+    save_checkpoint(model, optimizer, epoch=1, val_f1=0.5, path=str(ckpt_dir / "best_model_k1.pt"))
+
+    train_loader, test_loader, class_weights = tiny_loaders
+    with patch(
+        "deeplob.evaluate.get_dataloaders",
+        return_value=(train_loader, test_loader, class_weights),
+    ):
+        run_evaluation(str(config_path), "unused_data_dir", checkpoint_dir=str(ckpt_dir))
+
+    results_path = ckpt_dir / "results.json"
+    assert results_path.exists(), "results.json was not created"
+
+    results = json.loads(results_path.read_text())
+    assert "1" in results, "Expected key '1' (horizon k=1) in results"
+    required_keys = {"accuracy", "macro_f1", "weighted_f1", "per_class_f1", "confusion_matrix"}
+    missing = required_keys - results["1"].keys()
+    assert not missing, f"results['1'] is missing keys: {missing}"

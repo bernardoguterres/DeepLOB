@@ -83,7 +83,10 @@ def load_fi2010_with_boundaries(data_dir: str, k: int) -> tuple[np.ndarray, np.n
     cumulative = 0
 
     for fp in npy_files:
-        arr = np.load(fp)  # (N_day, 144)
+        try:
+            arr = np.load(fp)  # (N_day, 144)
+        except (OSError, ValueError) as exc:
+            raise OSError(f"Failed to load {fp}: {exc}") from exc
         x_parts.append(arr[:, :40].astype(np.float64))
         # Raw labels are 1/2/3 → subtract 1 → 0/1/2
         y_parts.append(arr[:, label_col].astype(np.int64) - 1)

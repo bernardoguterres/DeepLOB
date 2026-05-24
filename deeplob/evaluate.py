@@ -197,14 +197,17 @@ def run_evaluation(
         out_path = Path(checkpoint_dir) / "results.json"
         # JSON keys must be strings; convert int keys
         serialisable = {str(k): v for k, v in all_results.items()}
-        with out_path.open("w") as fh:
-            json.dump(serialisable, fh, indent=2)
-        print(f"\nResults saved to {out_path}")
+        try:
+            with out_path.open("w") as fh:
+                json.dump(serialisable, fh, indent=2)
+            print(f"\nResults saved to {out_path}")
+        except OSError as exc:
+            print(f"Warning: failed to save results to {out_path}: {exc}")
     else:
         print("No checkpoints found — nothing to evaluate.")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     import argparse
 
     parser = argparse.ArgumentParser(

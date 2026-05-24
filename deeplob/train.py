@@ -179,18 +179,21 @@ def train(
         )
 
         # JSONL log
-        with log_path.open("a") as fh:
-            fh.write(
-                json.dumps(
-                    {
-                        "epoch": epoch,
-                        "train_loss": round(train_loss, 6),
-                        "val_loss": round(val_loss, 6),
-                        "val_f1": round(val_f1, 6),
-                    }
+        try:
+            with log_path.open("a") as fh:
+                fh.write(
+                    json.dumps(
+                        {
+                            "epoch": epoch,
+                            "train_loss": round(train_loss, 6),
+                            "val_loss": round(val_loss, 6),
+                            "val_f1": round(val_f1, 6),
+                        }
+                    )
+                    + "\n"
                 )
-                + "\n"
-            )
+        except OSError as exc:
+            print(f"Warning: failed to write training log to {log_path}: {exc}")
 
         # Checkpoint best model
         if val_f1 > best_val_f1:
@@ -208,7 +211,7 @@ def train(
     print(f"Training complete. Best val F1: {best_val_f1:.4f} at epoch {best_epoch}")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     import argparse
 
     parser = argparse.ArgumentParser(description="Train DeepLOB for a single horizon.")

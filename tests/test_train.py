@@ -10,12 +10,13 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 import torch
 import torch.nn as nn
 
 from deeplob.model import DeepLOB
 from deeplob.train import train, train_one_epoch
-from deeplob.utils import get_device, load_checkpoint, save_checkpoint, set_seed
+from deeplob.utils import get_device, load_checkpoint, load_config, save_checkpoint, set_seed
 
 # ---------------------------------------------------------------------------
 # 1. Training loop — loss decreases with gradient descent
@@ -198,3 +199,57 @@ def test_set_seed_reproducibility():
         "Tensors A and B differ despite being generated with the same seed — "
         "set_seed() is not fully reproducible."
     )
+
+
+# ---------------------------------------------------------------------------
+# 7. load_config — missing file raises FileNotFoundError
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_missing_file():
+    """load_config must raise FileNotFoundError for a non-existent path."""
+    with pytest.raises(FileNotFoundError, match="Config file not found"):
+        load_config("/nonexistent/path/config.yaml")
+
+
+# ---------------------------------------------------------------------------
+# 8. load_checkpoint — missing file raises FileNotFoundError
+# ---------------------------------------------------------------------------
+
+
+def test_load_checkpoint_missing_file():
+    """load_checkpoint must raise FileNotFoundError for a non-existent path."""
+    model = DeepLOB(hidden_size=4)
+    optimizer = torch.optim.Adam(model.parameters())
+    with pytest.raises(FileNotFoundError, match="Checkpoint not found"):
+        load_checkpoint("/nonexistent/path/model.pt", model, optimizer)
+
+
+# ---------------------------------------------------------------------------
+# 9. get_device — falls back to CPU when no accelerators are available
+# ---------------------------------------------------------------------------
+
+
+def test_get_device_falls_back_to_cpu():
+    """get_device returns torch.device('cpu') when MPS and CUDA are both unavailable."""
+    with (
+        patch("torch.backends.mps.is_available", return_value=False),
+        patch("torch.cuda.is_available", return_value=False),
+    ):
+        device = get_device()
+    assert str(device) == "cpu", f"Expected 'cpu', got '{device}'"
+
+
+# ---------------------------------------------------------------------------
+# 10. get_device — returns CUDA when CUDA is available and MPS is not
+# ---------------------------------------------------------------------------
+
+
+def test_get_device_uses_cuda_when_available():
+    """get_device returns torch.device('cuda') when CUDA is available and MPS is not."""
+    with (
+        patch("torch.backends.mps.is_available", return_value=False),
+        patch("torch.cuda.is_available", return_value=True),
+    ):
+        device = get_device()
+    assert str(device) == "cuda", f"Expected 'cuda', got '{device}'"
