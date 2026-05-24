@@ -11,3 +11,6 @@ training:
   train_days: 7
   epochs: 50
   patience: 10
+
+data:
+  horizons: [1, 2, 3, 5, 10]
