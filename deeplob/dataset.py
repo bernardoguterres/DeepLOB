@@ -219,8 +219,11 @@ class LOBDataset(Dataset):
             x: Float tensor, shape ``(1, window, 40)``. Channel dim prepended for CNN.
             y: Long tensor scalar (class index).
         """
-        # np.ascontiguousarray ensures the slice is writable/contiguous for torch
-        x = torch.from_numpy(np.ascontiguousarray(self._X[idx], dtype=np.float32)).unsqueeze(0)
+        # np.array always allocates a new writable C-contiguous buffer.
+        # np.ascontiguousarray is not enough here: if the stride view already has
+        # the right dtype it returns the read-only source unchanged, which makes
+        # torch.from_numpy emit a non-writable-tensor warning.
+        x = torch.from_numpy(np.array(self._X[idx], dtype=np.float32)).unsqueeze(0)
         return x, self._y[idx]
 
 
