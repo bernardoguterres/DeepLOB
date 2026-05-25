@@ -57,3 +57,7 @@ data/processed/
 
 # Claude
 CLAUDE.md
+.claude/
+
+# Outputs (checkpoints, logs, plots — not tracked)
+outputs/

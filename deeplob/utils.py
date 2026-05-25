@@ -54,6 +54,7 @@ def set_seed(seed: int = 42) -> None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
+    torch.set_num_threads(2)
 
 
 def get_device() -> torch.device:

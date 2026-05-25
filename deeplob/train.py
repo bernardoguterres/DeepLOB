@@ -9,6 +9,7 @@ Full pipeline: load config → seed → get_dataloaders → DeepLOB → Adam
 """
 
 import json
+import time
 from pathlib import Path
 
 import torch
@@ -51,13 +52,18 @@ def train_one_epoch(
     n_batches = 0
 
     pbar = tqdm(loader, desc="  train", leave=False, unit="batch")
-    for x, y in pbar:
+    for i, (x, y) in enumerate(pbar):
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
         logits = model(x)
         loss = criterion(logits, y)
         loss.backward()
         optimizer.step()
+        if device.type == "mps":
+            torch.mps.synchronize()
+            # Brief inter-batch pause every 50 batches to break up sustained GPU load
+            if i % 50 == 0:
+                time.sleep(0.05)
         total_loss += loss.item()
         n_batches += 1
         pbar.set_postfix(loss=f"{loss.item():.4f}")
@@ -194,6 +200,9 @@ def train(
                 )
         except OSError as exc:
             print(f"Warning: failed to write training log to {log_path}: {exc}")
+
+        # Pause between epochs to allow chip thermals to recover
+        time.sleep(2)
 
         # Checkpoint best model
         if val_f1 > best_val_f1:
