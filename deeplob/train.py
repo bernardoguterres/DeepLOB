@@ -20,9 +20,44 @@ from tqdm import tqdm
 
 from deeplob.dataset import get_dataloaders
 from deeplob.model import DeepLOB
-from deeplob.utils import get_device, load_config, save_checkpoint, set_seed
+from deeplob.utils import get_device, load_checkpoint, load_config, save_checkpoint, set_seed
 
 __all__ = ["train_one_epoch", "validate", "train"]
+
+
+def _reconstruct_no_improve(log_path: Path, best_val_f1: float) -> int:
+    """Count consecutive epochs without improvement at the end of a training log.
+
+    Replays the JSONL log in order, tracking the running best val_f1.  Used
+    when resuming a checkpoint so that the early-stopping counter is restored
+    correctly rather than reset to zero.
+
+    Args:
+        log_path: Path to the ``training_log_k{k}.jsonl`` file.
+        best_val_f1: The best val_f1 stored in the checkpoint (used as the
+            floor so the counter cannot be under-counted).
+
+    Returns:
+        Number of consecutive epochs at the tail of the log where val_f1
+        did not exceed the running best.  Returns 0 on any read/parse error.
+    """
+    no_improve = 0
+    running_best = -1.0
+    try:
+        with log_path.open() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                entry = json.loads(line)
+                if entry["val_f1"] > running_best:
+                    running_best = entry["val_f1"]
+                    no_improve = 0
+                else:
+                    no_improve += 1
+    except (OSError, json.JSONDecodeError, KeyError):
+        no_improve = 0
+    return no_improve
 
 
 def train_one_epoch(
@@ -160,7 +195,7 @@ def train(
     # ── 5. Optimiser ─────────────────────────────────────────────────────────
     optimizer = torch.optim.Adam(model.parameters(), lr=training_cfg["lr"])
 
-    # ── 6. Output paths & counters ───────────────────────────────────────────
+    # ── 6. Output paths ──────────────────────────────────────────────────────
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     log_path = out / f"training_log_k{k}.jsonl"
@@ -171,9 +206,23 @@ def train(
     best_val_f1 = -1.0
     best_epoch = 0
     no_improve = 0
+    start_epoch = 1
+
+    # ── 6b. Resume from checkpoint if one already exists ─────────────────────
+    if Path(ckpt_path).exists():
+        resumed_epoch, best_val_f1 = load_checkpoint(ckpt_path, model, optimizer)
+        best_epoch = resumed_epoch
+        no_improve = _reconstruct_no_improve(log_path, best_val_f1)
+        start_epoch = resumed_epoch + 1
+        print(
+            f"Resuming k={k} from epoch {resumed_epoch} "
+            f"(best val_f1={best_val_f1:.4f}, no_improve={no_improve}/{patience})"
+        )
+    else:
+        print(f"Starting k={k} from scratch.")
 
     # ── 7. Epoch loop ────────────────────────────────────────────────────────
-    for epoch in range(1, n_epochs + 1):
+    for epoch in range(start_epoch, n_epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
         val_loss, val_f1 = validate(model, test_loader, criterion, device)
 
