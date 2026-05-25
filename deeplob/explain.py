@@ -291,7 +291,7 @@ def _use_agg_backend() -> None:
 
     try:
         matplotlib.use("Agg")
-    except Exception:  # noqa: BLE001
+    except (AttributeError, ImportError, RuntimeError):
         pass  # Backend already locked — the figure will still save correctly
 
 
