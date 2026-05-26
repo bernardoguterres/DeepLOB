@@ -16,6 +16,7 @@ Outputs saved to /kaggle/working/outputs/
 
 # ── Cell 1: Dependencies ─────────────────────────────────────────────────────
 import json
+import os
 import random
 from pathlib import Path
 
@@ -31,11 +32,41 @@ from tqdm import tqdm
 
 print(f"PyTorch: {torch.__version__}")
 print(f"CUDA available: {torch.cuda.is_available()}")
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Sanity-check that the GPU is actually usable (P100 + PyTorch>=2.5 is not)
+def _probe_cuda() -> bool:
+    if not torch.cuda.is_available():
+        return False
+    try:
+        t = torch.zeros(1).cuda()
+        _ = t + 1          # triggers a real kernel call
+        del t
+        return True
+    except Exception as e:
+        print(f"WARNING: CUDA detected but not usable — {e}")
+        print("         Falling back to CPU. Switch Kaggle accelerator to T4 x2 for GPU speed.")
+        return False
+
+_cuda_ok = _probe_cuda()
+device = torch.device("cuda" if _cuda_ok else "cpu")
 print(f"Using device: {device}")
 
+# ── Cell 1b: Discover data path ───────────────────────────────────────────────
+def find_data_dir(base: str = "/kaggle/input") -> str:
+    """Walk /kaggle/input to find the directory that contains .npy files."""
+    base_path = Path(base)
+    print(f"\nKaggle input contents: {sorted(p.name for p in base_path.iterdir())}")
+    # Search recursively for any .npy file
+    npy_files = sorted(base_path.rglob("*.npy"))
+    if not npy_files:
+        raise FileNotFoundError(f"No .npy files found anywhere under {base}")
+    # Return the directory containing the first .npy file
+    found = str(npy_files[0].parent) + "/"
+    print(f"Found {len(npy_files)} .npy files in: {found}")
+    return found
+
 # ── Cell 2: Config ───────────────────────────────────────────────────────────
-DATA_DIR   = "/kaggle/input/deeplob-fi2010/"   # ← your dataset path
+DATA_DIR   = find_data_dir()   # auto-discovers correct path under /kaggle/input
 OUTPUT_DIR = "/kaggle/working/outputs/"
 HORIZONS   = [1, 2, 3, 5, 10]
 
