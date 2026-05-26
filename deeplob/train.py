@@ -193,7 +193,7 @@ def train(
     criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
 
     # ── 5. Optimiser ─────────────────────────────────────────────────────────
-    optimizer = torch.optim.Adam(model.parameters(), lr=training_cfg["lr"])
+    optimizer = torch.optim.Adam(model.parameters(), lr=training_cfg["lr"], eps=training_cfg.get("adam_eps", 1e-8))
 
     # ── 6. Output paths ──────────────────────────────────────────────────────
     out = Path(output_dir)
