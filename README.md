@@ -139,7 +139,9 @@ The CNN and Inception blocks extract local spatial and temporal features but hav
 
 Integrated Gradients (Sundararajan et al. 2017) attributes each prediction to individual LOB features by integrating gradients along a straight path from a zero baseline to the input. Unlike SHAP TreeSHAP — which applies only to tree ensembles — IG works directly on the DeepLOB forward pass via PyTorch autograd and satisfies the completeness axiom: attributions sum exactly to `F(x) − F(baseline)` for the target class, giving an honest per-feature accounting with no approximation error in the attribution sum. The same method was applied to neural dimensionality reduction architectures in the XAI-DR thesis; DeepLOB extends it to CNN-LSTM sequence models over limit order book data.
 
-*Findings to be updated after running `python -m deeplob.explain --k 10 --method ig`.* Placeholder: ask price at level 1 accounts for X% of mean absolute attribution at k=10. Attribution shifts toward deeper LOB levels at shorter horizons (k=1), consistent with the intuition that immediate microstructure dominates short-horizon prediction.
+Ask volume at level 1 (`ask_vol_L1`) accounts for 8.9% of mean absolute IG attribution at k=10 — the single most influential feature — with volume features collectively accounting for 83.9% of total attribution versus only 16.1% for price features. The heatmap reveals asymmetric attribution across prediction classes: `ask_vol_L1` carries nearly twice the attribution for downward predictions (0.0050) as for upward ones (0.0025), consistent with the intuition that thinning ask-side liquidity at the best level signals impending sell pressure at longer horizons.
+
+SHAP GradientExplainer broadly agrees — `ask_vol_L1` ranks first (11.5%) and the top-5 features overlap substantially — but pushes the volume/price split further to 99.5%/0.5%, suggesting SHAP is insensitive to price features that IG still captures at ~16%. The disagreement in ask/bid balance (IG: 54.5%/45.5%; SHAP: 68.1%/31.9%) reflects SHAP's approximation error under the gradient-baseline assumption rather than a genuine architectural difference.
 
 ---
 
