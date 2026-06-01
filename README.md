@@ -2,6 +2,8 @@
 
 PyTorch reimplementation of [DeepLOB: Deep Convolutional Neural Networks for Limit Order Books](https://arxiv.org/abs/1902.09450) (Zhang, Zohren & Roberts, 2019) — mid-price movement classification from limit order book snapshots using a CNN + Inception + LSTM architecture on the FI-2010 benchmark.
 
+![CI](https://github.com/bernardoguterres/DeepLOB/actions/workflows/ci.yml/badge.svg)
+
 ---
 
 ## Results

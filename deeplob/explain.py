@@ -265,20 +265,20 @@ def shap_summary(
 
     actual_n = len(preds)
     attrs = np.zeros((actual_n, 40))
-    sv_arr = np.asarray(shap_vals)
 
-    if sv_arr.ndim == 5:
-        # New shap API (>=0.46): shape (n_explain, 1, 100, 40, n_classes)
+    if isinstance(shap_vals, list):
+        # Old shap API (<0.46): list of n_classes arrays, each (n_explain, 1, 100, 40)
         for i, pred in enumerate(preds):
-            sv = sv_arr[i, 0, :, :, int(pred)]  # (100, 40)
-            attrs[i] = sv.mean(axis=0)
-    else:
-        # Old shap API: list of n_classes arrays, each (n_explain, 1, 100, 40)
-        for i, pred in enumerate(preds):
-            sv = sv_arr[int(pred)][i]  # (1, 100, 40) or (100, 40)
+            sv = np.asarray(shap_vals[int(pred)])[i]  # (1, 100, 40) or (100, 40)
             if sv.ndim == 3:
                 sv = sv.squeeze(0)  # (100, 40)
             attrs[i] = sv.mean(axis=0)  # (40,)
+    else:
+        # New shap API (>=0.46): shape (n_explain, 1, 100, 40, n_classes)
+        sv_arr = np.asarray(shap_vals)
+        for i, pred in enumerate(preds):
+            sv = sv_arr[i, 0, :, :, int(pred)]  # (100, 40)
+            attrs[i] = sv.mean(axis=0)
 
     return {
         "attributions": attrs,
