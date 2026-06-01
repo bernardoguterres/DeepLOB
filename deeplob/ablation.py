@@ -16,6 +16,7 @@ comparison table is printed to stdout.
 """
 
 import json
+import time
 from pathlib import Path
 
 import torch
@@ -24,7 +25,7 @@ import torch.nn as nn
 from deeplob.dataset import get_dataloaders
 from deeplob.model import CNNBlock, DeepLOB, InceptionModule
 from deeplob.train import train_one_epoch, validate
-from deeplob.utils import get_device, load_config, save_checkpoint, set_seed
+from deeplob.utils import get_device, load_checkpoint, load_config, save_checkpoint, set_seed
 
 __all__ = ["CNNOnlyModel", "CNNInceptionModel", "DeepLOB", "run_ablation"]
 
@@ -138,19 +139,27 @@ def run_ablation(
     data_dir: str,
     k: int = 10,
     output_dir: str = "outputs/ablation/",
+    pretrained_dir: str = "outputs/",
 ) -> None:
     """Train all three variants on horizon *k* and compare macro F1.
 
-    Each variant is trained from scratch for the full number of epochs defined
-    in the config (with early stopping). Results are written to
-    ``{output_dir}/ablation_results.json`` and a Markdown comparison table is
-    printed to stdout.
+    CNN-only and CNN+Inception are always trained from scratch.  For Full
+    DeepLOB, if ``{pretrained_dir}/best_model_k{k}.pt`` already exists the
+    checkpoint's saved ``val_f1`` is reused and retraining is skipped — this
+    avoids redundant 20-hour runs when the full model has already been trained
+    to convergence.
+
+    Results are written to ``{output_dir}/ablation_results.json`` and a
+    Markdown comparison table is printed to stdout.
 
     Args:
         config_path: Path to YAML config (same schema as ``configs/default.yaml``).
         data_dir: Path to FI-2010 ``.npy`` files.
         k: Prediction horizon to run the ablation on (default 10).
-        output_dir: Directory for checkpoints and the JSON results file.
+        output_dir: Directory for ablation checkpoints and the JSON results file.
+        pretrained_dir: Directory to look for an existing
+            ``best_model_k{k}.pt`` for the Full DeepLOB variant.
+            Set to ``""`` to always retrain from scratch.
     """
     config = load_config(config_path)
     set_seed(config.get("seed", 42))
@@ -199,6 +208,18 @@ def run_ablation(
             out / f"ablation_{name.lower().replace(' ', '_').replace('+', 'plus')}_k{k}.pt"
         )
 
+        # --- Full DeepLOB: reuse existing checkpoint if available ----------
+        if name == "Full DeepLOB" and pretrained_dir:
+            pretrained_ckpt = Path(pretrained_dir) / f"best_model_k{k}.pt"
+            if pretrained_ckpt.exists():
+                _, loaded_f1 = load_checkpoint(str(pretrained_ckpt), model, optimizer)
+                results[name] = loaded_f1
+                print(
+                    f"  [{name}] Loaded pretrained checkpoint from {pretrained_ckpt} "
+                    f"(val_f1={loaded_f1:.4f}) — skipping retraining."
+                )
+                continue
+        # --- Train from scratch -------------------------------------------
         best_val_f1 = -1.0
         no_improve = 0
 
@@ -210,6 +231,9 @@ def run_ablation(
                 f"  [{name}] Epoch {epoch:3d}/{n_epochs}  "
                 f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  val_f1={val_f1:.4f}"
             )
+
+            if device.type == "mps":
+                time.sleep(2)  # thermal recovery between epochs on Apple Silicon
 
             if val_f1 > best_val_f1:
                 best_val_f1 = val_f1
@@ -249,5 +273,10 @@ if __name__ == "__main__":  # pragma: no cover
     parser.add_argument("--data_dir", default="data/raw/", help="Path to FI-2010 .npy files")
     parser.add_argument("--k", type=int, default=10, help="Prediction horizon (default 10)")
     parser.add_argument("--output_dir", default="outputs/ablation/", help="Output directory")
+    parser.add_argument(
+        "--pretrained_dir",
+        default="outputs/",
+        help="Dir containing best_model_k{k}.pt — reused for Full DeepLOB to skip retraining",
+    )
     args = parser.parse_args()
-    run_ablation(args.config, args.data_dir, args.k, args.output_dir)
+    run_ablation(args.config, args.data_dir, args.k, args.output_dir, args.pretrained_dir)
