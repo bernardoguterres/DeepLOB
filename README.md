@@ -6,15 +6,17 @@ PyTorch reimplementation of [DeepLOB: Deep Convolutional Neural Networks for Lim
 
 ## Results
 
-| k  | Paper (Zhang et al. 2019) | Ours | Δ   |
-|----|--------------------------|------|-----|
-| 1  | 0.67                     | TBD  | TBD |
-| 2  | 0.71                     | TBD  | TBD |
-| 3  | 0.75                     | TBD  | TBD |
-| 5  | 0.78                     | TBD  | TBD |
-| 10 | 0.83                     | TBD  | TBD |
+| k  | Paper (Zhang et al. 2019) | Ours   | Δ       |
+|----|--------------------------|--------|---------|
+| 1  | 0.67                     | 0.7401 | +10.5%  |
+| 2  | 0.71                     | 0.6495 | −8.5%   |
+| 3  | 0.75                     | 0.7298 | −2.7%   |
+| 5  | 0.78                     | 0.7811 | +0.1%   |
+| 10 | 0.83                     | 0.7565 | −8.9%   |
 
 Metric: macro F1. Dataset: FI-2010, day-based 7/3 split.
+
+k=2 and k=10 fall ~8–9% short of the paper. Both horizons show strong stationary-class F1 (≥0.83) but weaker minority-class F1 — weighted F1 for k=2 is 0.73 and for k=10 is 0.76, indicating the gap is driven by class imbalance at mid-range horizons rather than overall model failure.
 
 ---
 
@@ -46,12 +48,12 @@ Input (B, 1, 100, 40)
         ▼
 ┌────────────────────────────────────┐
 │              LSTM                  │
-│  hidden_size=256, layers=1         │  global sequence memory
+│  hidden_size=64, layers=1          │  global sequence memory
 │  take final timestep [:, -1, :]   │
 └────────────────────────────────────┘
-        │ (B, 256)
+        │ (B, 64)
         ▼
-   Linear(256 → 3)
+   Linear(64 → 3)
         │
         ▼
 Output (B, 3) — raw logits

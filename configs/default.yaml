@@ -1,7 +1,7 @@
 seed: 42
 
 model:
-  hidden_size: 256
+  hidden_size: 64
   lstm_layers: 1
 
 training:
