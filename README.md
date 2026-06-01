@@ -149,11 +149,11 @@ SHAP GradientExplainer broadly agrees — `ask_vol_L1` ranks first (11.5%) and t
 
 | Model           | Macro F1 | Δ vs Full |
 |-----------------|----------|-----------|
-| CNN only        | TBD      | TBD       |
-| CNN + Inception | TBD      | TBD       |
-| Full DeepLOB    | TBD      | —         |
+| CNN only        | 0.6624   | −12.4%    |
+| CNN + Inception | 0.5397   | −28.7%    |
+| Full DeepLOB    | 0.7565   | —         |
 
-Each row isolates one architectural component. CNN-only measures whether spatial price-volume pairing alone — without any temporal modelling — is sufficient to classify mid-price movement. CNN + Inception without LSTM tests whether local multi-scale features, captured across three parallel temporal kernel sizes, suffice without global sequence memory. The gap between each successive row is the empirical contribution of that component: Inception's multi-scale capture over the CNN baseline, and the LSTM's sequence memory over Inception alone.
+CNN-only achieves 0.6624 macro F1 — 12.4% below the full model — confirming that spatial price-volume feature extraction alone is insufficient, but provides a reasonable baseline by preserving all 60,160 flattened spatial features. Counterintuitively, CNN + Inception scores lower (0.5397, −28.7%) than CNN-only: the Inception module adds multi-scale temporal features but the Global Average Pooling used in its absence of an LSTM collapses the entire temporal dimension into 192 values, discarding the sequential structure that GAP cannot recover. The result isolates the LSTM's contribution: it is not just an add-on but the load-bearing component — without it, adding Inception's 192-channel output through GAP actively hurts performance relative to keeping the full flattened CNN representation.
 
 ---
 
