@@ -46,9 +46,7 @@ class PredictRequest(BaseModel):
     @classmethod
     def validate_length(cls, v: list[float]) -> list[float]:
         if len(v) != 40:
-            raise ValueError(
-                f"lob_snapshot must contain exactly 40 features, got {len(v)}"
-            )
+            raise ValueError(f"lob_snapshot must contain exactly 40 features, got {len(v)}")
         return v
 
 
@@ -97,7 +95,7 @@ def _load_model_from_dir(k: int, checkpoint_dir: str) -> None:
         logger.info("Loaded StandardScaler from %s", scaler_path)
     else:
         logger.warning(
-            "No StandardScaler found at %s — inputs expected pre-normalized (FI-2010 z-score format)",
+            "No StandardScaler found at %s — inputs expected pre-normalized (FI-2010 z-score)",
             scaler_path,
         )
 
