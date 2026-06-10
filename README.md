@@ -109,11 +109,77 @@ python -m deeplob.ablation --config configs/default.yaml --k 10
 python -m deeplob.explain --config configs/default.yaml --k 10 --method ig
 ```
 
-### 8. Tests
+### 8. Serve predictions (AlphaLive integration)
+
+```bash
+python deeplob/serve.py --k 10 --checkpoint_dir outputs/ --port 8001
+```
+
+Check it's alive:
+
+```bash
+curl http://localhost:8001/health
+# {"status":"ok","model":"deeplob_k10","device":"mps"}
+
+curl -X POST http://localhost:8001/predict \
+  -H "Content-Type: application/json" \
+  -d '{"lob_snapshot": [0.1, 0.2, ..., 0.4]}'  # 40 floats
+# {"direction":2,"confidence":0.81,"probabilities":[0.07,0.12,0.81]}
+```
+
+### 9. Tests
 
 ```bash
 pytest tests/ -v --cov=deeplob
 ```
+
+---
+
+## Inference Server
+
+`deeplob/serve.py` is a single-file [FastAPI](https://fastapi.tiangolo.com) + [uvicorn](https://www.uvicorn.org) server designed for integration with [AlphaLive](https://github.com/bernardoguterres/AlphaLive).
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/predict` | Predict mid-price direction from a 40-feature LOB snapshot |
+| `GET` | `/health` | Health check — model name and device |
+
+**Request** (`POST /predict`):
+```json
+{"lob_snapshot": [<40 floats in FI-2010 order>]}
+```
+Features must be in FI-2010 column order: `ask_price_L1, ask_vol_L1, ask_price_L2, ask_vol_L2, … bid_vol_L10`. If your data is already z-score normalised (standard FI-2010 format), pass it directly. If a `scaler_k{k}.pkl` exists in the checkpoint directory, it will be applied automatically.
+
+**Response**:
+```json
+{
+  "direction": 2,
+  "confidence": 0.81,
+  "probabilities": [0.07, 0.12, 0.81]
+}
+```
+`direction`: 0 = down, 1 = stationary, 2 = up.
+
+**Startup flags**:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--k` | `10` | Prediction horizon — loads `best_model_k{k}.pt` |
+| `--checkpoint_dir` | `outputs/` | Directory containing the `.pt` checkpoint |
+| `--port` | `8001` | HTTP port to listen on |
+
+**Design notes:**
+- Hidden size is inferred from the checkpoint weight shapes — no flag required and works for any `k`.
+- A single 40-feature snapshot is tiled 100× to fill the temporal window the model expects. This is appropriate for AlphaLive's use case (no rolling LOB buffer available on Alpaca free tier; the filter fails open when no L2 data is present).
+- Latency logged on every request. Typical: < 5 ms on CPU, < 2 ms on MPS/CUDA.
+
+### AlphaLive integration
+
+AlphaLive queries this server before placing any order. The `DeepLOBClient` (in `alphalive/services/deeplob_client.py`) runs concurrently with the AlphaSignal sentiment filter via `asyncio.gather`. Execution is allowed only if the predicted direction matches the strategy's intended direction **and** confidence ≥ threshold (default 0.6). Either filter fails open on timeout or connection error — the server being down never blocks a trade.
+
+Configure in AlphaLive via env vars: `DEEPLOB_URL`, `DEEPLOB_CONFIDENCE_THRESHOLD`, `DEEPLOB_TIMEOUT_SECONDS`, `DEEPLOB_ENABLED`.
 
 ---
 
@@ -171,7 +237,8 @@ DeepLOB/
 │   ├── evaluate.py      # metrics, benchmark comparison table
 │   ├── ablation.py      # CNN-only, CNN+Inception, full model variants
 │   ├── explain.py       # Integrated Gradients and SHAP attributions
-│   └── utils.py         # config, seed, device, checkpoint I/O
+│   ├── utils.py         # config, seed, device, checkpoint I/O
+│   └── serve.py         # FastAPI inference server (POST /predict, GET /health)
 ├── tests/
 │   ├── conftest.py      # shared fixtures
 │   ├── test_dataset.py  # 16 tests
