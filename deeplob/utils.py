@@ -1,5 +1,6 @@
 """Shared utilities: config loading, seeding, device selection, checkpointing."""
 
+import logging
 import random
 from pathlib import Path
 
@@ -7,6 +8,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import yaml
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "load_config",
@@ -72,7 +75,7 @@ def get_device() -> torch.device:
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
-    print(f"Using device: {device}")
+    logger.info("Using device: %s", device)
     return device
 
 

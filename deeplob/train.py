@@ -9,8 +9,11 @@ Full pipeline: load config → seed → get_dataloaders → DeepLOB → Adam
 """
 
 import json
+import logging
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import torch
 import torch.nn as nn
@@ -215,23 +218,21 @@ def train(
         best_epoch = resumed_epoch
         no_improve = _reconstruct_no_improve(log_path, best_val_f1)
         start_epoch = resumed_epoch + 1
-        print(
-            f"Resuming k={k} from epoch {resumed_epoch} "
-            f"(best val_f1={best_val_f1:.4f}, no_improve={no_improve}/{patience})"
+        logger.info(
+            "Resuming k=%d from epoch %d (best val_f1=%.4f, no_improve=%d/%d)",
+            k, resumed_epoch, best_val_f1, no_improve, patience,
         )
     else:
-        print(f"Starting k={k} from scratch.")
+        logger.info("Starting k=%d from scratch.", k)
 
     # ── 7. Epoch loop ────────────────────────────────────────────────────────
     for epoch in range(start_epoch, n_epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
         val_loss, val_f1 = validate(model, test_loader, criterion, device)
 
-        print(
-            f"Epoch {epoch:3d}/{n_epochs}  "
-            f"train_loss={train_loss:.4f}  "
-            f"val_loss={val_loss:.4f}  "
-            f"val_f1={val_f1:.4f}"
+        logger.info(
+            "Epoch %3d/%d  train_loss=%.4f  val_loss=%.4f  val_f1=%.4f",
+            epoch, n_epochs, train_loss, val_loss, val_f1,
         )
 
         # JSONL log
@@ -249,7 +250,7 @@ def train(
                     + "\n"
                 )
         except OSError as exc:
-            print(f"Warning: failed to write training log to {log_path}: {exc}")
+            logger.warning("Failed to write training log to %s: %s", log_path, exc)
 
         # Pause between epochs to allow chip thermals to recover
         time.sleep(2)
@@ -263,11 +264,11 @@ def train(
         else:
             no_improve += 1
             if no_improve >= patience:
-                print(f"Early stopping at epoch {epoch} (no improvement for {patience} epochs).")
+                logger.info("Early stopping at epoch %d (no improvement for %d epochs).", epoch, patience)
                 break
 
     # ── 8. Summary ───────────────────────────────────────────────────────────
-    print(f"Training complete. Best val F1: {best_val_f1:.4f} at epoch {best_epoch}")
+    logger.info("Training complete. Best val F1: %.4f at epoch %d", best_val_f1, best_epoch)
 
 
 if __name__ == "__main__":  # pragma: no cover
