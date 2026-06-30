@@ -13,8 +13,6 @@ import logging
 import time
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 import torch
 import torch.nn as nn
 from sklearn.metrics import f1_score
@@ -24,6 +22,8 @@ from tqdm import tqdm
 from deeplob.dataset import get_dataloaders
 from deeplob.model import DeepLOB
 from deeplob.utils import get_device, load_checkpoint, load_config, save_checkpoint, set_seed
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["train_one_epoch", "validate", "train"]
 
@@ -220,7 +220,11 @@ def train(
         start_epoch = resumed_epoch + 1
         logger.info(
             "Resuming k=%d from epoch %d (best val_f1=%.4f, no_improve=%d/%d)",
-            k, resumed_epoch, best_val_f1, no_improve, patience,
+            k,
+            resumed_epoch,
+            best_val_f1,
+            no_improve,
+            patience,
         )
     else:
         logger.info("Starting k=%d from scratch.", k)
@@ -232,7 +236,11 @@ def train(
 
         logger.info(
             "Epoch %3d/%d  train_loss=%.4f  val_loss=%.4f  val_f1=%.4f",
-            epoch, n_epochs, train_loss, val_loss, val_f1,
+            epoch,
+            n_epochs,
+            train_loss,
+            val_loss,
+            val_f1,
         )
 
         # JSONL log
@@ -264,7 +272,9 @@ def train(
         else:
             no_improve += 1
             if no_improve >= patience:
-                logger.info("Early stopping at epoch %d (no improvement for %d epochs).", epoch, patience)
+                logger.info(
+                    "Early stopping at epoch %d (no improvement for %d epochs).", epoch, patience
+                )
                 break
 
     # ── 8. Summary ───────────────────────────────────────────────────────────

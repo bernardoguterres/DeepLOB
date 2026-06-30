@@ -47,6 +47,7 @@ def setup_logging() -> None:
     )
     root.addHandler(handler)
 
+
 # ---------------------------------------------------------------------------
 # Global inference state (set before uvicorn.run() in __main__)
 # ---------------------------------------------------------------------------
