@@ -31,6 +31,7 @@ _K_MAP: dict[int, int] = {1: 40, 2: 41, 3: 42, 5: 43, 10: 44}
 
 __all__ = [
     "load_fi2010_with_boundaries",
+    "load_fi2010_all_k",
     "time_split",
     "normalise",
     "make_windows",
@@ -97,6 +98,57 @@ def load_fi2010_with_boundaries(data_dir: str, k: int) -> tuple[np.ndarray, np.n
     y = np.concatenate(y_parts, axis=0)
 
     return X, y, boundaries
+
+
+def load_fi2010_all_k(
+    data_dir: str,
+) -> tuple[np.ndarray, dict[int, np.ndarray], list[int]]:
+    """Load FI-2010 once and return features plus labels for every horizon.
+
+    Reads each .npy file a single time and extracts both the shared feature
+    columns (0–39) and all five label columns (40–44) in one pass.  Callers
+    that need to evaluate across multiple horizons should use this instead of
+    calling :func:`load_fi2010_with_boundaries` once per horizon, which
+    re-reads the same files each time.
+
+    Args:
+        data_dir: Path to directory containing FI-2010 .npy files.
+
+    Returns:
+        Tuple of:
+            X: Feature array, shape ``(N, 40)``.
+            y_by_k: Dict mapping each horizon *k* → label array shape ``(N,)``.
+            boundaries: Cumulative row counts per day.
+
+    Raises:
+        FileNotFoundError: If *data_dir* or .npy files are missing.
+    """
+    path = Path(data_dir)
+    if not path.exists():
+        raise FileNotFoundError(f"data_dir does not exist: {data_dir}")
+    npy_files = sorted(path.glob("*.npy"))
+    if not npy_files:
+        raise FileNotFoundError(f"No .npy files found in {data_dir}")
+
+    x_parts: list[np.ndarray] = []
+    y_parts: dict[int, list[np.ndarray]] = {k: [] for k in _K_MAP}
+    boundaries: list[int] = []
+    cumulative = 0
+
+    for fp in npy_files:
+        try:
+            arr = np.load(fp)
+        except (OSError, ValueError) as exc:
+            raise OSError(f"Failed to load {fp}: {exc}") from exc
+        x_parts.append(arr[:, :40].astype(np.float64))
+        for k, col in _K_MAP.items():
+            y_parts[k].append(arr[:, col].astype(np.int64) - 1)
+        cumulative += arr.shape[0]
+        boundaries.append(cumulative)
+
+    X = np.concatenate(x_parts, axis=0)
+    y_by_k = {k: np.concatenate(parts) for k, parts in y_parts.items()}
+    return X, y_by_k, boundaries
 
 
 def time_split(

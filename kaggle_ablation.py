@@ -2,7 +2,7 @@
 DeepLOB — Kaggle Ablation Script
 ==================================
 Trains CNN-only and CNN+Inception variants for k=10.
-Full DeepLOB result is taken from the already-completed training (val_f1=0.7565).
+Full DeepLOB result is loaded from outputs/results.json (k=10 macro_f1).
 
 SETUP:
 1. Same dataset as kaggle_train.py (bernardoguterresDeepLOb)
@@ -59,7 +59,19 @@ OUTPUT_DIR = "/kaggle/working/outputs/ablation/"
 
 # ── Config ────────────────────────────────────────────────────────────────────
 K = 10
-FULL_DEEPLOB_F1 = 0.7565   # from completed kaggle training (epoch 39)
+
+def _load_full_deeplob_f1(results_json: str = "/kaggle/working/outputs/results.json") -> float:
+    """Read the k=10 macro-F1 from the completed training results file."""
+    try:
+        with open(results_json) as fh:
+            data = json.load(fh)
+        return float(data["10"]["macro_f1"])
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        print(f"WARNING: could not read Full DeepLOB F1 from {results_json}: {exc}")
+        print("WARNING: falling back to hardcoded value 0.7565")
+        return 0.7565
+
+FULL_DEEPLOB_F1 = _load_full_deeplob_f1()
 
 CFG = {
     "seed":       42,

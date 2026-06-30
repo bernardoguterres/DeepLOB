@@ -17,7 +17,7 @@ import torch.nn as nn
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
 from torch.utils.data import DataLoader
 
-from deeplob.dataset import get_dataloaders
+from deeplob.dataset import LOBDataset, get_dataloaders, load_fi2010_all_k, make_windows, normalise, time_split
 from deeplob.model import DeepLOB
 from deeplob.utils import get_device, load_checkpoint, load_config
 
@@ -153,6 +153,17 @@ def run_evaluation(
     training_cfg = config["training"]
     model_cfg = config.get("model", {})
     horizons: list[int] = config.get("data", {}).get("horizons", [1, 2, 3, 5, 10])
+    batch_size: int = training_cfg["batch_size"]
+    window: int = training_cfg.get("window", 100)
+    train_days: int = training_cfg.get("train_days", 7)
+
+    # Load and preprocess features once for all horizons — avoids reading the
+    # same .npy files five times when evaluating all k values.
+    print(f"Loading FI-2010 data from {data_dir} …")
+    X, y_by_k, boundaries = load_fi2010_all_k(data_dir)
+    split = boundaries[train_days - 1]
+    X_train, X_test = X[:split], X[split:]
+    _, X_test_n, _ = normalise(X_train, X_test)
 
     all_results: dict[int, dict] = {}
     macro_f1_by_k: dict[int, float] = {}
@@ -172,12 +183,13 @@ def run_evaluation(
         epoch, val_f1 = load_checkpoint(ckpt_path, model, optimizer)
         print(f"[k={k}] Checkpoint: epoch={epoch}, val_f1={val_f1:.4f}")
 
-        _, test_loader, _ = get_dataloaders(
-            data_dir=data_dir,
-            k=k,
-            batch_size=training_cfg["batch_size"],
-            window=training_cfg.get("window", 100),
-            train_days=training_cfg.get("train_days", 7),
+        y_test = y_by_k[k][split:]
+        X_test_w, y_test_w = make_windows(X_test_n, y_test, window)
+        test_loader = torch.utils.data.DataLoader(
+            LOBDataset(X_test_w, y_test_w),
+            batch_size=batch_size,
+            shuffle=False,
+            pin_memory=torch.cuda.is_available(),
         )
 
         metrics = evaluate(model, test_loader, device)

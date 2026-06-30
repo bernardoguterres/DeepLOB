@@ -58,7 +58,8 @@ def _reconstruct_no_improve(log_path: Path, best_val_f1: float) -> int:
                     no_improve = 0
                 else:
                     no_improve += 1
-    except (OSError, json.JSONDecodeError, KeyError):
+    except (OSError, json.JSONDecodeError, KeyError) as exc:
+        logger.warning("Could not reconstruct no_improve from %s: %s — resetting to 0", log_path, exc)
         no_improve = 0
     return no_improve
 
