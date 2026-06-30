@@ -1,6 +1,7 @@
 """Minimal inference server for DeepLOB predictions."""
 
 import logging
+import os
 import pickle
 import sys
 import time
@@ -22,7 +23,29 @@ from deeplob.model import DeepLOB  # noqa: E402
 from deeplob.utils import get_device  # noqa: E402
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+
+def setup_logging() -> None:
+    """Configure root logger from LOG_LEVEL env var (default INFO).
+
+    Call once at process startup. Uses the same format as AlphaLive so logs
+    are parseable consistently across the Alpha system.
+    """
+    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    root = logging.getLogger()
+    root.setLevel(level)
+    for h in root.handlers[:]:
+        root.removeHandler(h)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(level)
+    handler.setFormatter(
+        logging.Formatter(
+            fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    root.addHandler(handler)
 
 # ---------------------------------------------------------------------------
 # Global inference state (set before uvicorn.run() in __main__)
@@ -185,4 +208,5 @@ if __name__ == "__main__":
     _k = args.k
     _checkpoint_dir = args.checkpoint_dir
 
+    setup_logging()
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info")
