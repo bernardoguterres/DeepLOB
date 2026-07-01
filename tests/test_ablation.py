@@ -113,8 +113,8 @@ def test_run_ablation_saves_json(tmp_path, tiny_loaders):
             "deeplob.ablation.get_dataloaders",
             return_value=(train_loader, test_loader, class_weights),
         ),
-        patch("deeplob.ablation.train_one_epoch", return_value=0.5),
-        patch("deeplob.ablation.validate", return_value=(0.5, 0.70)),
+        patch("deeplob.train.train_one_epoch", return_value=0.5),
+        patch("deeplob.train.validate", return_value=(0.5, 0.70)),
     ):
         run_ablation(str(config_path), "data/raw/", k=10, output_dir=output_dir, pretrained_dir="")
 

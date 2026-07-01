@@ -16,7 +16,6 @@ comparison table is printed to stdout.
 """
 
 import json
-import time
 from pathlib import Path
 
 import torch
@@ -24,8 +23,8 @@ import torch.nn as nn
 
 from deeplob.dataset import get_dataloaders
 from deeplob.model import CNNBlock, DeepLOB, InceptionModule
-from deeplob.train import train_one_epoch, validate
-from deeplob.utils import get_device, load_checkpoint, load_config, save_checkpoint, set_seed
+from deeplob.train import run_epoch
+from deeplob.utils import get_device, load_checkpoint, load_config, set_seed
 
 __all__ = ["CNNOnlyModel", "CNNInceptionModel", "DeepLOB", "run_ablation"]
 
@@ -221,29 +220,39 @@ def run_ablation(
                 continue
         # --- Train from scratch -------------------------------------------
         best_val_f1 = -1.0
+        best_epoch = 0
         no_improve = 0
 
         for epoch in range(1, n_epochs + 1):
-            train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
-            val_loss, val_f1 = validate(model, test_loader, criterion, device)
+            result = run_epoch(
+                model,
+                train_loader,
+                test_loader,
+                optimizer,
+                criterion,
+                device,
+                epoch,
+                best_val_f1,
+                best_epoch,
+                no_improve,
+                patience,
+                ckpt_path,
+            )
+            best_val_f1, best_epoch, no_improve = (
+                result.best_val_f1,
+                result.best_epoch,
+                result.no_improve,
+            )
 
             print(
                 f"  [{name}] Epoch {epoch:3d}/{n_epochs}  "
-                f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  val_f1={val_f1:.4f}"
+                f"train_loss={result.train_loss:.4f}  val_loss={result.val_loss:.4f}  "
+                f"val_f1={result.val_f1:.4f}"
             )
 
-            if device.type == "mps":
-                time.sleep(2)  # thermal recovery between epochs on Apple Silicon
-
-            if val_f1 > best_val_f1:
-                best_val_f1 = val_f1
-                no_improve = 0
-                save_checkpoint(model, optimizer, epoch, val_f1, ckpt_path)
-            else:
-                no_improve += 1
-                if no_improve >= patience:
-                    print(f"  [{name}] Early stopping at epoch {epoch}.")
-                    break
+            if result.should_stop:
+                print(f"  [{name}] Early stopping at epoch {epoch}.")
+                break
 
         results[name] = best_val_f1
         print(f"  [{name}] Best macro F1: {best_val_f1:.4f}")

@@ -12,6 +12,7 @@ import json
 import logging
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 import torch
 import torch.nn as nn
@@ -25,7 +26,7 @@ from deeplob.utils import get_device, load_checkpoint, load_config, save_checkpo
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["train_one_epoch", "validate", "train"]
+__all__ = ["train_one_epoch", "validate", "run_epoch", "EpochResult", "train"]
 
 
 def _reconstruct_no_improve(log_path: Path, best_val_f1: float) -> int:
@@ -152,6 +153,81 @@ def validate(
     return mean_loss, macro_f1
 
 
+class EpochResult(NamedTuple):
+    """Outcome of one call to :func:`run_epoch`."""
+
+    train_loss: float
+    val_loss: float
+    val_f1: float
+    best_val_f1: float
+    best_epoch: int
+    no_improve: int
+    should_stop: bool
+
+
+def run_epoch(
+    model: nn.Module,
+    train_loader: DataLoader,
+    test_loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    device: torch.device,
+    epoch: int,
+    best_val_f1: float,
+    best_epoch: int,
+    no_improve: int,
+    patience: int,
+    ckpt_path: str,
+) -> EpochResult:
+    """Run one train+validate epoch, checkpoint on improvement, and check early-stopping.
+
+    Shared by :func:`train` and :func:`~deeplob.ablation.run_ablation` so the
+    checkpoint/early-stopping/thermal-pause logic exists in exactly one place.
+
+    Args:
+        model: DeepLOB (or ablation variant) model.
+        train_loader: Training DataLoader.
+        test_loader: Validation/test DataLoader.
+        optimizer: Optimiser.
+        criterion: Loss function.
+        device: Compute device.
+        epoch: Current epoch number (1-indexed).
+        best_val_f1: Best macro F1 seen so far.
+        best_epoch: Epoch at which ``best_val_f1`` was achieved.
+        no_improve: Consecutive epochs without improvement so far.
+        patience: Epochs to tolerate without improvement before stopping.
+        ckpt_path: Path to write the checkpoint to on improvement.
+
+    Returns:
+        :class:`EpochResult` with the epoch's metrics and updated early-stopping state.
+    """
+    train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
+    val_loss, val_f1 = validate(model, test_loader, criterion, device)
+
+    if device.type == "mps":
+        time.sleep(2)  # thermal recovery between epochs on Apple Silicon
+
+    if val_f1 > best_val_f1:
+        best_val_f1 = val_f1
+        best_epoch = epoch
+        no_improve = 0
+        save_checkpoint(model, optimizer, epoch, val_f1, ckpt_path)
+        should_stop = False
+    else:
+        no_improve += 1
+        should_stop = no_improve >= patience
+
+    return EpochResult(
+        train_loss=train_loss,
+        val_loss=val_loss,
+        val_f1=val_f1,
+        best_val_f1=best_val_f1,
+        best_epoch=best_epoch,
+        no_improve=no_improve,
+        should_stop=should_stop,
+    )
+
+
 def train(
     config_path: str,
     data_dir: str,
@@ -234,16 +310,33 @@ def train(
 
     # ── 7. Epoch loop ────────────────────────────────────────────────────────
     for epoch in range(start_epoch, n_epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
-        val_loss, val_f1 = validate(model, test_loader, criterion, device)
+        result = run_epoch(
+            model,
+            train_loader,
+            test_loader,
+            optimizer,
+            criterion,
+            device,
+            epoch,
+            best_val_f1,
+            best_epoch,
+            no_improve,
+            patience,
+            ckpt_path,
+        )
+        best_val_f1, best_epoch, no_improve = (
+            result.best_val_f1,
+            result.best_epoch,
+            result.no_improve,
+        )
 
         logger.info(
             "Epoch %3d/%d  train_loss=%.4f  val_loss=%.4f  val_f1=%.4f",
             epoch,
             n_epochs,
-            train_loss,
-            val_loss,
-            val_f1,
+            result.train_loss,
+            result.val_loss,
+            result.val_f1,
         )
 
         # JSONL log
@@ -253,9 +346,9 @@ def train(
                     json.dumps(
                         {
                             "epoch": epoch,
-                            "train_loss": round(train_loss, 6),
-                            "val_loss": round(val_loss, 6),
-                            "val_f1": round(val_f1, 6),
+                            "train_loss": round(result.train_loss, 6),
+                            "val_loss": round(result.val_loss, 6),
+                            "val_f1": round(result.val_f1, 6),
                         }
                     )
                     + "\n"
@@ -263,22 +356,11 @@ def train(
         except OSError as exc:
             logger.warning("Failed to write training log to %s: %s", log_path, exc)
 
-        if device.type == "mps":
-            time.sleep(2)  # thermal recovery between epochs on Apple Silicon
-
-        # Checkpoint best model
-        if val_f1 > best_val_f1:
-            best_val_f1 = val_f1
-            best_epoch = epoch
-            no_improve = 0
-            save_checkpoint(model, optimizer, epoch, val_f1, ckpt_path)
-        else:
-            no_improve += 1
-            if no_improve >= patience:
-                logger.info(
-                    "Early stopping at epoch %d (no improvement for %d epochs).", epoch, patience
-                )
-                break
+        if result.should_stop:
+            logger.info(
+                "Early stopping at epoch %d (no improvement for %d epochs).", epoch, patience
+            )
+            break
 
     # ── 8. Summary ───────────────────────────────────────────────────────────
     logger.info("Training complete. Best val F1: %.4f at epoch %d", best_val_f1, best_epoch)
