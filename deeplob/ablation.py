@@ -33,7 +33,7 @@ from deeplob.model import (
 from deeplob.train import run_epoch
 from deeplob.utils import get_device, load_checkpoint, load_config, set_seed
 
-__all__ = ["CNNOnlyModel", "CNNInceptionModel", "DeepLOB", "run_ablation"]
+__all__ = ["CNNOnlyModel", "CNNInceptionModel", "run_ablation"]
 
 
 class CNNOnlyModel(nn.Module):

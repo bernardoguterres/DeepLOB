@@ -10,7 +10,6 @@ compares to published DeepLOB benchmarks, and saves ``results.json``.
 
 import json
 from pathlib import Path
-from typing import Union
 
 import torch
 import torch.nn as nn
@@ -40,7 +39,7 @@ PAPER_BENCHMARKS: dict[int, float] = {
 
 def evaluate(
     model: nn.Module,
-    loader: Union[DataLoader, list],
+    loader: DataLoader | list,
     device: torch.device,
 ) -> dict:
     """Evaluate a trained DeepLOB model and return a metrics dictionary.

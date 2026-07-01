@@ -35,7 +35,6 @@ def test_cnn_block_output_shape():
     cnn.eval()
     with torch.no_grad():
         out = cnn(x)
-    print(f"CNNBlock actual output shape: {out.shape}")
     assert out.shape == (8, 32, 94, 20), f"Expected (8, 32, 94, 20), got {out.shape}"
 
 
@@ -63,7 +62,6 @@ def test_inception_output_channels():
 def test_parameter_count_in_range():
     """Trainable parameter count must be between 200k and 600k."""
     n = count_parameters(DeepLOB())
-    print(f"DeepLOB trainable parameters: {n:,}")  # always visible with pytest -s
     assert (
         200_000 <= n <= 600_000
     ), f"Parameter count {n:,} is outside the expected range [200k, 600k]"
