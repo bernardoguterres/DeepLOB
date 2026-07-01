@@ -59,7 +59,9 @@ def _reconstruct_no_improve(log_path: Path, best_val_f1: float) -> int:
                 else:
                     no_improve += 1
     except (OSError, json.JSONDecodeError, KeyError) as exc:
-        logger.warning("Could not reconstruct no_improve from %s: %s — resetting to 0", log_path, exc)
+        logger.warning(
+            "Could not reconstruct no_improve from %s: %s — resetting to 0", log_path, exc
+        )
         no_improve = 0
     return no_improve
 
@@ -261,8 +263,8 @@ def train(
         except OSError as exc:
             logger.warning("Failed to write training log to %s: %s", log_path, exc)
 
-        # Pause between epochs to allow chip thermals to recover
-        time.sleep(2)
+        if device.type == "mps":
+            time.sleep(2)  # thermal recovery between epochs on Apple Silicon
 
         # Checkpoint best model
         if val_f1 > best_val_f1:
