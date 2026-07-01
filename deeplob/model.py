@@ -13,6 +13,11 @@ import torch.nn as nn
 
 __all__ = ["CNNBlock", "InceptionModule", "DeepLOB", "count_parameters"]
 
+#: CNNBlock's output shape for the fixed (100, 40) input window: (channels, time, levels).
+CNN_OUT_CHANNELS = 32
+CNN_OUT_HEIGHT = 94
+CNN_OUT_WIDTH = 20
+
 
 class CNNBlock(nn.Module):
     """First block of DeepLOB: spatial feature extraction from LOB levels.
@@ -157,7 +162,9 @@ class DeepLOB(nn.Module):
         x = self.cnn(x)  # (B, 32, 94, 20)
         x = self.inception(x)  # (B, 192, 94, 20)
         x = x.permute(0, 2, 3, 1)  # (B, 94, 20, 192) — time × space × channels
-        x = x.reshape(B, 94 * 20, 192)  # (B, 1880, 192) — flatten spatial into sequence
+        x = x.reshape(
+            B, CNN_OUT_HEIGHT * CNN_OUT_WIDTH, 192
+        )  # (B, 1880, 192) — flatten spatial into sequence
         x, _ = self.lstm(x)  # (B, 1880, hidden_size)
         x = x[:, -1, :]  # (B, hidden_size) — final timestep only
         x = self.fc(x)  # (B, num_classes)

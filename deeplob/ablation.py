@@ -22,7 +22,14 @@ import torch
 import torch.nn as nn
 
 from deeplob.dataset import get_dataloaders
-from deeplob.model import CNNBlock, DeepLOB, InceptionModule
+from deeplob.model import (
+    CNN_OUT_CHANNELS,
+    CNN_OUT_HEIGHT,
+    CNN_OUT_WIDTH,
+    CNNBlock,
+    DeepLOB,
+    InceptionModule,
+)
 from deeplob.train import run_epoch
 from deeplob.utils import get_device, load_checkpoint, load_config, set_seed
 
@@ -46,7 +53,7 @@ class CNNOnlyModel(nn.Module):
         super().__init__()
         self.cnn = CNNBlock()
         # After CNNBlock: (B, 32, 94, 20) → flatten → 32 × 94 × 20 = 60 160
-        self._flat_size = 32 * 94 * 20
+        self._flat_size = CNN_OUT_CHANNELS * CNN_OUT_HEIGHT * CNN_OUT_WIDTH
         self.fc = nn.Linear(self._flat_size, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
