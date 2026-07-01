@@ -275,7 +275,10 @@ def train(
     criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
 
     # ── 5. Optimiser ─────────────────────────────────────────────────────────
-    adam_eps = training_cfg.get("adam_eps", 1e-8)
+    # Default of 1.0 matches the paper's epsilon (Zhang et al. 2019), not
+    # PyTorch's own Adam default of 1e-8 — configs should still set this
+    # explicitly, but the fallback shouldn't silently diverge from the paper.
+    adam_eps = training_cfg.get("adam_eps", 1.0)
     optimizer = torch.optim.Adam(model.parameters(), lr=training_cfg["lr"], eps=adam_eps)
 
     # ── 6. Output paths ──────────────────────────────────────────────────────

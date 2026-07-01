@@ -202,7 +202,8 @@ def run_ablation(
         print(f"{'─' * 60}")
 
         model = model.to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=training_cfg["lr"])
+        adam_eps = training_cfg.get("adam_eps", 1.0)
+        optimizer = torch.optim.Adam(model.parameters(), lr=training_cfg["lr"], eps=adam_eps)
         ckpt_path = str(
             out / f"ablation_{name.lower().replace(' ', '_').replace('+', 'plus')}_k{k}.pt"
         )
