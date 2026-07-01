@@ -228,6 +228,121 @@ def run_epoch(
     )
 
 
+def _build_training_setup(
+    config: dict,
+    data_dir: str,
+    k: int,
+    device: torch.device,
+) -> tuple[DataLoader, DataLoader, nn.Module, torch.optim.Optimizer, nn.Module]:
+    """Build dataloaders, model, criterion, and optimiser from a loaded config.
+
+    Args:
+        config: Parsed YAML config (``load_config`` output).
+        data_dir: Path to FI-2010 ``.npy`` files.
+        k: Prediction horizon.
+        device: Compute device the model is moved to.
+
+    Returns:
+        Tuple of ``(train_loader, test_loader, model, optimizer, criterion)``.
+    """
+    training_cfg = config["training"]
+    train_loader, test_loader, class_weights = get_dataloaders(
+        data_dir=data_dir,
+        k=k,
+        batch_size=training_cfg["batch_size"],
+        window=training_cfg.get("window", 100),
+        train_days=training_cfg.get("train_days", 7),
+    )
+
+    model_cfg = config.get("model", {})
+    model = DeepLOB(
+        hidden_size=model_cfg.get("hidden_size", 256),
+        num_lstm_layers=model_cfg.get("lstm_layers", 1),
+    ).to(device)
+
+    criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
+
+    # Default of 1.0 matches the paper's epsilon (Zhang et al. 2019), not
+    # PyTorch's own Adam default of 1e-8 — configs should still set this
+    # explicitly, but the fallback shouldn't silently diverge from the paper.
+    adam_eps = training_cfg.get("adam_eps", 1.0)
+    optimizer = torch.optim.Adam(model.parameters(), lr=training_cfg["lr"], eps=adam_eps)
+
+    return train_loader, test_loader, model, optimizer, criterion
+
+
+class _ResumeState(NamedTuple):
+    """Early-stopping state to resume from, or fresh-start defaults."""
+
+    start_epoch: int
+    best_val_f1: float
+    best_epoch: int
+    no_improve: int
+
+
+def _resume_or_start(
+    ckpt_path: str,
+    log_path: Path,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    k: int,
+    patience: int,
+) -> _ResumeState:
+    """Resume training state from an existing checkpoint, or start fresh.
+
+    Args:
+        ckpt_path: Path to ``best_model_k{k}.pt``.
+        log_path: Path to ``training_log_k{k}.jsonl`` (read to rebuild the
+            early-stopping counter when resuming).
+        model: Model to load the checkpoint's weights into, if resuming.
+        optimizer: Optimiser to load the checkpoint's state into, if resuming.
+        k: Prediction horizon (for logging only).
+        patience: Early-stopping patience (for logging only).
+
+    Returns:
+        :class:`_ResumeState` with the epoch/F1/counter to continue from.
+    """
+    if not Path(ckpt_path).exists():
+        logger.info("Starting k=%d from scratch.", k)
+        return _ResumeState(start_epoch=1, best_val_f1=-1.0, best_epoch=0, no_improve=0)
+
+    resumed_epoch, best_val_f1 = load_checkpoint(ckpt_path, model, optimizer)
+    no_improve = _reconstruct_no_improve(log_path, best_val_f1)
+    logger.info(
+        "Resuming k=%d from epoch %d (best val_f1=%.4f, no_improve=%d/%d)",
+        k,
+        resumed_epoch,
+        best_val_f1,
+        no_improve,
+        patience,
+    )
+    return _ResumeState(
+        start_epoch=resumed_epoch + 1,
+        best_val_f1=best_val_f1,
+        best_epoch=resumed_epoch,
+        no_improve=no_improve,
+    )
+
+
+def _append_jsonl_log(log_path: Path, epoch: int, result: EpochResult) -> None:
+    """Append one epoch's metrics as a JSON line, warning (not raising) on I/O failure."""
+    try:
+        with log_path.open("a") as fh:
+            fh.write(
+                json.dumps(
+                    {
+                        "epoch": epoch,
+                        "train_loss": round(result.train_loss, 6),
+                        "val_loss": round(result.val_loss, 6),
+                        "val_f1": round(result.val_f1, 6),
+                    }
+                )
+                + "\n"
+            )
+    except OSError as exc:
+        logger.warning("Failed to write training log to %s: %s", log_path, exc)
+
+
 def train(
     config_path: str,
     data_dir: str,
@@ -249,39 +364,15 @@ def train(
         k: Prediction horizon. One of [1, 2, 3, 5, 10].
         output_dir: Directory for checkpoints and log files (created if absent).
     """
-    # ── 1. Bootstrap ────────────────────────────────────────────────────────
     config = load_config(config_path)
     set_seed(config.get("seed", 42))
     device = get_device()
 
-    # ── 2. Data ──────────────────────────────────────────────────────────────
-    training_cfg = config["training"]
-    train_loader, test_loader, class_weights = get_dataloaders(
-        data_dir=data_dir,
-        k=k,
-        batch_size=training_cfg["batch_size"],
-        window=training_cfg.get("window", 100),
-        train_days=training_cfg.get("train_days", 7),
+    train_loader, test_loader, model, optimizer, criterion = _build_training_setup(
+        config, data_dir, k, device
     )
 
-    # ── 3. Model ─────────────────────────────────────────────────────────────
-    model_cfg = config.get("model", {})
-    model = DeepLOB(
-        hidden_size=model_cfg.get("hidden_size", 256),
-        num_lstm_layers=model_cfg.get("lstm_layers", 1),
-    ).to(device)
-
-    # ── 4. Loss ──────────────────────────────────────────────────────────────
-    criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
-
-    # ── 5. Optimiser ─────────────────────────────────────────────────────────
-    # Default of 1.0 matches the paper's epsilon (Zhang et al. 2019), not
-    # PyTorch's own Adam default of 1e-8 — configs should still set this
-    # explicitly, but the fallback shouldn't silently diverge from the paper.
-    adam_eps = training_cfg.get("adam_eps", 1.0)
-    optimizer = torch.optim.Adam(model.parameters(), lr=training_cfg["lr"], eps=adam_eps)
-
-    # ── 6. Output paths ──────────────────────────────────────────────────────
+    training_cfg = config["training"]
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     log_path = out / f"training_log_k{k}.jsonl"
@@ -289,30 +380,10 @@ def train(
 
     n_epochs = training_cfg.get("epochs", 50)
     patience = training_cfg.get("patience", 10)
-    best_val_f1 = -1.0
-    best_epoch = 0
-    no_improve = 0
-    start_epoch = 1
+    resume = _resume_or_start(ckpt_path, log_path, model, optimizer, k, patience)
+    best_val_f1, best_epoch, no_improve = resume.best_val_f1, resume.best_epoch, resume.no_improve
 
-    # ── 6b. Resume from checkpoint if one already exists ─────────────────────
-    if Path(ckpt_path).exists():
-        resumed_epoch, best_val_f1 = load_checkpoint(ckpt_path, model, optimizer)
-        best_epoch = resumed_epoch
-        no_improve = _reconstruct_no_improve(log_path, best_val_f1)
-        start_epoch = resumed_epoch + 1
-        logger.info(
-            "Resuming k=%d from epoch %d (best val_f1=%.4f, no_improve=%d/%d)",
-            k,
-            resumed_epoch,
-            best_val_f1,
-            no_improve,
-            patience,
-        )
-    else:
-        logger.info("Starting k=%d from scratch.", k)
-
-    # ── 7. Epoch loop ────────────────────────────────────────────────────────
-    for epoch in range(start_epoch, n_epochs + 1):
+    for epoch in range(resume.start_epoch, n_epochs + 1):
         result = run_epoch(
             model,
             train_loader,
@@ -341,23 +412,7 @@ def train(
             result.val_loss,
             result.val_f1,
         )
-
-        # JSONL log
-        try:
-            with log_path.open("a") as fh:
-                fh.write(
-                    json.dumps(
-                        {
-                            "epoch": epoch,
-                            "train_loss": round(result.train_loss, 6),
-                            "val_loss": round(result.val_loss, 6),
-                            "val_f1": round(result.val_f1, 6),
-                        }
-                    )
-                    + "\n"
-                )
-        except OSError as exc:
-            logger.warning("Failed to write training log to %s: %s", log_path, exc)
+        _append_jsonl_log(log_path, epoch, result)
 
         if result.should_stop:
             logger.info(
@@ -365,7 +420,6 @@ def train(
             )
             break
 
-    # ── 8. Summary ───────────────────────────────────────────────────────────
     logger.info("Training complete. Best val F1: %.4f at epoch %d", best_val_f1, best_epoch)
 
 

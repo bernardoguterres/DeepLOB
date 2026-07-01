@@ -140,6 +140,73 @@ def _ablation_table(results: dict[str, float]) -> str:
     return "\n".join(rows)
 
 
+def _train_variant_from_scratch(
+    name: str,
+    model: nn.Module,
+    train_loader,
+    test_loader,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    device: torch.device,
+    n_epochs: int,
+    patience: int,
+    ckpt_path: str,
+) -> float:
+    """Run the epoch loop for one ablation variant and return its best macro F1.
+
+    Args:
+        name: Variant name, used only for progress printouts.
+        model: Ablation variant model (already moved to *device*).
+        train_loader: Training DataLoader.
+        test_loader: Validation/test DataLoader.
+        optimizer: Optimiser.
+        criterion: Loss function.
+        device: Compute device.
+        n_epochs: Maximum epochs to train for.
+        patience: Early-stopping patience.
+        ckpt_path: Path to write the variant's checkpoint to on improvement.
+
+    Returns:
+        Best macro F1 achieved across the run.
+    """
+    best_val_f1 = -1.0
+    best_epoch = 0
+    no_improve = 0
+
+    for epoch in range(1, n_epochs + 1):
+        result = run_epoch(
+            model,
+            train_loader,
+            test_loader,
+            optimizer,
+            criterion,
+            device,
+            epoch,
+            best_val_f1,
+            best_epoch,
+            no_improve,
+            patience,
+            ckpt_path,
+        )
+        best_val_f1, best_epoch, no_improve = (
+            result.best_val_f1,
+            result.best_epoch,
+            result.no_improve,
+        )
+
+        print(
+            f"  [{name}] Epoch {epoch:3d}/{n_epochs}  "
+            f"train_loss={result.train_loss:.4f}  val_loss={result.val_loss:.4f}  "
+            f"val_f1={result.val_f1:.4f}"
+        )
+
+        if result.should_stop:
+            print(f"  [{name}] Early stopping at epoch {epoch}.")
+            break
+
+    return best_val_f1
+
+
 def run_ablation(
     config_path: str,
     data_dir: str,
@@ -227,41 +294,18 @@ def run_ablation(
                 )
                 continue
         # --- Train from scratch -------------------------------------------
-        best_val_f1 = -1.0
-        best_epoch = 0
-        no_improve = 0
-
-        for epoch in range(1, n_epochs + 1):
-            result = run_epoch(
-                model,
-                train_loader,
-                test_loader,
-                optimizer,
-                criterion,
-                device,
-                epoch,
-                best_val_f1,
-                best_epoch,
-                no_improve,
-                patience,
-                ckpt_path,
-            )
-            best_val_f1, best_epoch, no_improve = (
-                result.best_val_f1,
-                result.best_epoch,
-                result.no_improve,
-            )
-
-            print(
-                f"  [{name}] Epoch {epoch:3d}/{n_epochs}  "
-                f"train_loss={result.train_loss:.4f}  val_loss={result.val_loss:.4f}  "
-                f"val_f1={result.val_f1:.4f}"
-            )
-
-            if result.should_stop:
-                print(f"  [{name}] Early stopping at epoch {epoch}.")
-                break
-
+        best_val_f1 = _train_variant_from_scratch(
+            name,
+            model,
+            train_loader,
+            test_loader,
+            optimizer,
+            criterion,
+            device,
+            n_epochs,
+            patience,
+            ckpt_path,
+        )
         results[name] = best_val_f1
         print(f"  [{name}] Best macro F1: {best_val_f1:.4f}")
 

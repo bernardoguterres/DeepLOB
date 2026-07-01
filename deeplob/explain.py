@@ -448,6 +448,82 @@ def plot_class_attribution_heatmap(
 # ---------------------------------------------------------------------------
 
 
+def _load_model_and_test_loader(
+    config: dict,
+    data_dir: str,
+    checkpoint_dir: str,
+    k: int,
+    device: torch.device,
+) -> tuple[nn.Module, DataLoader]:
+    """Build the test DataLoader and load ``best_model_k{k}.pt`` for explanation.
+
+    Args:
+        config: Parsed YAML config (``load_config`` output).
+        data_dir: Path to FI-2010 ``.npy`` files.
+        checkpoint_dir: Directory containing ``best_model_k{k}.pt``.
+        k: Prediction horizon.
+        device: Compute device the model is moved to.
+
+    Returns:
+        Tuple of ``(model, test_loader)``. The model is loaded from checkpoint
+        and left in whatever mode ``load_checkpoint`` sets (not forced to eval).
+
+    Raises:
+        FileNotFoundError: If the checkpoint for horizon *k* is not found.
+    """
+    training_cfg = config["training"]
+    model_cfg = config.get("model", {})
+
+    _, test_loader, _ = get_dataloaders(
+        data_dir=data_dir,
+        k=k,
+        batch_size=training_cfg["batch_size"],
+        window=training_cfg.get("window", 100),
+        train_days=training_cfg.get("train_days", 7),
+    )
+
+    ckpt_path = str(Path(checkpoint_dir) / f"best_model_k{k}.pt")
+    model = DeepLOB(
+        hidden_size=model_cfg.get("hidden_size", 256),
+        num_lstm_layers=model_cfg.get("lstm_layers", 1),
+    ).to(device)
+    optimizer = torch.optim.Adam(model.parameters())
+    epoch, val_f1 = load_checkpoint(ckpt_path, model, optimizer)
+    print(f"Loaded checkpoint: epoch={epoch}, val_f1={val_f1:.4f}")
+
+    return model, test_loader
+
+
+def _save_attributions_npz(
+    npz_path: Path,
+    attributions: np.ndarray,
+    labels: np.ndarray,
+    predictions: np.ndarray,
+    feature_names: list[str],
+) -> None:
+    """Save raw attributions to a ``.npz`` file, warning (not raising) on I/O failure."""
+    try:
+        np.savez(
+            npz_path,
+            attributions=attributions,
+            labels=labels,
+            predictions=predictions,
+            feature_names=np.array(feature_names),
+        )
+        print(f"Saved raw attributions        → {npz_path}")
+    except OSError as exc:
+        print(f"Warning: failed to save attributions to {npz_path}: {exc}")
+
+
+def _print_top_features(attributions: np.ndarray, feature_names: list[str], top_n: int = 5) -> None:
+    """Print the top-N features by mean absolute attribution."""
+    mean_abs = np.abs(attributions).mean(axis=0)
+    top_idx = np.argsort(mean_abs)[::-1][:top_n]
+    print(f"\nTop {top_n} features by mean |attribution|:")
+    for rank, idx in enumerate(top_idx, 1):
+        print(f"  {rank}. {feature_names[idx]}: {mean_abs[idx]:.4f}")
+
+
 def run_explanation(
     config_path: str,
     data_dir: str,
@@ -488,25 +564,8 @@ def run_explanation(
 
     config = load_config(config_path)
     device = get_device()
-    training_cfg = config["training"]
-    model_cfg = config.get("model", {})
 
-    _, test_loader, _ = get_dataloaders(
-        data_dir=data_dir,
-        k=k,
-        batch_size=training_cfg["batch_size"],
-        window=training_cfg.get("window", 100),
-        train_days=training_cfg.get("train_days", 7),
-    )
-
-    ckpt_path = str(Path(checkpoint_dir) / f"best_model_k{k}.pt")
-    model = DeepLOB(
-        hidden_size=model_cfg.get("hidden_size", 256),
-        num_lstm_layers=model_cfg.get("lstm_layers", 1),
-    ).to(device)
-    optimizer = torch.optim.Adam(model.parameters())
-    epoch, val_f1 = load_checkpoint(ckpt_path, model, optimizer)
-    print(f"Loaded checkpoint: epoch={epoch}, val_f1={val_f1:.4f}")
+    model, test_loader = _load_model_and_test_loader(config, data_dir, checkpoint_dir, k, device)
 
     print(f"Computing attributions via {method.upper()} (k={k}) …")
     if method == "ig":
@@ -537,24 +596,10 @@ def run_explanation(
 
     # ── Raw attributions ─────────────────────────────────────────────────────
     npz_path = out / f"attributions_k{k}.npz"
-    try:
-        np.savez(
-            npz_path,
-            attributions=attributions,
-            labels=labels,
-            predictions=result["predictions"],
-            feature_names=np.array(feature_names),
-        )
-        print(f"Saved raw attributions        → {npz_path}")
-    except OSError as exc:
-        print(f"Warning: failed to save attributions to {npz_path}: {exc}")
+    _save_attributions_npz(npz_path, attributions, labels, result["predictions"], feature_names)
 
     # ── Top-5 summary ─────────────────────────────────────────────────────────
-    mean_abs = np.abs(attributions).mean(axis=0)
-    top5_idx = np.argsort(mean_abs)[::-1][:5]
-    print("\nTop 5 features by mean |attribution|:")
-    for rank, idx in enumerate(top5_idx, 1):
-        print(f"  {rank}. {feature_names[idx]}: {mean_abs[idx]:.4f}")
+    _print_top_features(attributions, feature_names, top_n=5)
 
 
 if __name__ == "__main__":  # pragma: no cover
