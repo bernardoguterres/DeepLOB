@@ -17,7 +17,7 @@ import torch.nn as nn
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
 from torch.utils.data import DataLoader
 
-from deeplob.dataset import LOBDataset, get_dataloaders, load_fi2010_all_k, make_windows, normalise, time_split
+from deeplob.dataset import LOBDataset, load_fi2010_all_k, make_windows, normalise
 from deeplob.model import DeepLOB
 from deeplob.utils import get_device, load_checkpoint, load_config
 

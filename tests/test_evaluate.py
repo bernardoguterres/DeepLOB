@@ -8,6 +8,7 @@ fully deterministic without needing a trained model.
 import json
 from unittest.mock import patch
 
+import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.metrics import accuracy_score, f1_score
@@ -56,6 +57,16 @@ def _make_logits(y_pred: list[int], num_classes: int = 3) -> torch.Tensor:
     for i, c in enumerate(y_pred):
         logits[i, c] = 10.0
     return logits
+
+
+def _make_fi2010_all_k(n_days: int = 10, day_size: int = 200):
+    """Synthetic (X, y_by_k, boundaries) matching load_fi2010_all_k's return shape."""
+    rng = np.random.default_rng(42)
+    n = n_days * day_size
+    X = rng.random((n, 40))
+    y_by_k = {1: rng.integers(0, 3, size=n).astype(np.int64)}
+    boundaries = [day_size * (i + 1) for i in range(n_days)]
+    return X, y_by_k, boundaries
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +230,8 @@ def test_run_evaluation_no_checkpoints(tmp_path):
     empty_dir = tmp_path / "empty_outputs"
     empty_dir.mkdir()
 
-    run_evaluation(str(config_path), "unused_data_dir", checkpoint_dir=str(empty_dir))
+    with patch("deeplob.evaluate.load_fi2010_all_k", return_value=_make_fi2010_all_k()):
+        run_evaluation(str(config_path), "unused_data_dir", checkpoint_dir=str(empty_dir))
 
     assert not (
         empty_dir / "results.json"
@@ -231,7 +243,7 @@ def test_run_evaluation_no_checkpoints(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_run_evaluation_saves_results_json(tmp_path, tiny_loaders):
+def test_run_evaluation_saves_results_json(tmp_path):
     """run_evaluation writes results.json with per-k metric dicts when a checkpoint exists."""
     config_path = tmp_path / "config.yaml"
     config_path.write_text(_EVAL_CONFIG)
@@ -243,11 +255,7 @@ def test_run_evaluation_saves_results_json(tmp_path, tiny_loaders):
     optimizer = torch.optim.Adam(model.parameters())
     save_checkpoint(model, optimizer, epoch=1, val_f1=0.5, path=str(ckpt_dir / "best_model_k1.pt"))
 
-    train_loader, test_loader, class_weights = tiny_loaders
-    with patch(
-        "deeplob.evaluate.get_dataloaders",
-        return_value=(train_loader, test_loader, class_weights),
-    ):
+    with patch("deeplob.evaluate.load_fi2010_all_k", return_value=_make_fi2010_all_k()):
         run_evaluation(str(config_path), "unused_data_dir", checkpoint_dir=str(ckpt_dir))
 
     results_path = ckpt_dir / "results.json"
