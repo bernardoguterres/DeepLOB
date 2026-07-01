@@ -24,15 +24,17 @@ from deeplob.utils import get_device, load_checkpoint, load_config
 __all__ = ["PAPER_BENCHMARKS", "evaluate", "benchmark_table", "run_evaluation"]
 
 # ---------------------------------------------------------------------------
-# Published macro-F1 values from Zhang et al. (2019), Table IV
+# Published DeepLOB macro-F1 values from Zhang et al. (2019), Table I (Setup 1).
+# The paper reports horizons in raw event count; this project's horizon k maps
+# to the paper's via paper_k = k * 10 (e.g. project k=1 -> paper k=10). Setup 1
+# only reports k=10, 50, 100, so project horizons 2 and 3 (paper k=20, 30) have
+# no published reference value.
 # ---------------------------------------------------------------------------
 
 PAPER_BENCHMARKS: dict[int, float] = {
-    1: 0.67,
-    2: 0.71,
-    3: 0.75,
-    5: 0.78,
-    10: 0.83,
+    1: 0.7766,
+    5: 0.7496,
+    10: 0.7658,
 }
 
 

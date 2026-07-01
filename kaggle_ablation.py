@@ -28,6 +28,7 @@ from tqdm import tqdm
 print(f"PyTorch: {torch.__version__}")
 print(f"CUDA available: {torch.cuda.is_available()}")
 
+
 def _probe_cuda() -> bool:
     if not torch.cuda.is_available():
         return False
@@ -40,8 +41,10 @@ def _probe_cuda() -> bool:
         print(f"WARNING: CUDA not usable — {e}")
         return False
 
+
 device = torch.device("cuda" if _probe_cuda() else "cpu")
 print(f"Using device: {device}")
+
 
 # ── Data path discovery ───────────────────────────────────────────────────────
 def find_data_dir(base: str = "/kaggle/input") -> str:
@@ -54,11 +57,13 @@ def find_data_dir(base: str = "/kaggle/input") -> str:
     print(f"Found {len(npy_files)} .npy files in: {found}")
     return found
 
-DATA_DIR   = find_data_dir()
+
+DATA_DIR = find_data_dir()
 OUTPUT_DIR = "/kaggle/working/outputs/ablation/"
 
 # ── Config ────────────────────────────────────────────────────────────────────
 K = 10
+
 
 def _load_full_deeplob_f1(results_json: str = "/kaggle/working/outputs/results.json") -> float:
     """Read the k=10 macro-F1 from the completed training results file."""
@@ -67,23 +72,27 @@ def _load_full_deeplob_f1(results_json: str = "/kaggle/working/outputs/results.j
             data = json.load(fh)
         return float(data["10"]["macro_f1"])
     except (OSError, KeyError, TypeError, ValueError) as exc:
-        print(f"WARNING: could not read Full DeepLOB F1 from {results_json}: {exc}")
-        print("WARNING: falling back to hardcoded value 0.7565")
-        return 0.7565
+        raise RuntimeError(
+            f"Could not read Full DeepLOB k=10 macro_f1 from {results_json}: {exc}. "
+            "Run kaggle_train.py first so the ablation deltas are computed against a "
+            "real baseline, not a stale hardcoded number."
+        ) from exc
+
 
 FULL_DEEPLOB_F1 = _load_full_deeplob_f1()
 
 CFG = {
-    "seed":       42,
-    "lr":         0.01,
-    "adam_eps":   1.0,
+    "seed": 42,
+    "lr": 0.01,
+    "adam_eps": 1.0,
     "batch_size": 32,
-    "window":     100,
+    "window": 100,
     "train_days": 7,
-    "epochs":     50,
-    "patience":   20,
+    "epochs": 50,
+    "patience": 20,
     "hidden_size": 64,
 }
+
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
 def set_seed(seed=42):
@@ -93,10 +102,12 @@ def set_seed(seed=42):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
 
+
 set_seed(CFG["seed"])
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
 _K_MAP = {1: 40, 2: 41, 3: 42, 5: 43, 10: 44}
+
 
 def get_dataloaders(data_dir, k, batch_size, window=100, train_days=7):
     path = Path(data_dir)
@@ -117,28 +128,46 @@ def get_dataloaders(data_dir, k, batch_size, window=100, train_days=7):
     y_train, y_test = y[:split], y[split:]
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
-    X_test  = scaler.transform(X_test)
+    X_test = scaler.transform(X_test)
+
     def make_windows(X, y):
         Xw = sliding_window_view(X, (window, X.shape[1])).squeeze(1)
-        return Xw, y[window - 1:]
+        return Xw, y[window - 1 :]
+
     X_tr_w, y_tr_w = make_windows(X_train, y_train)
-    X_te_w, y_te_w = make_windows(X_test,  y_test)
+    X_te_w, y_te_w = make_windows(X_test, y_test)
+
     class LOBDataset(Dataset):
         def __init__(self, X, y):
             self._X = X
             self._y = torch.from_numpy(np.ascontiguousarray(y, dtype=np.int64))
-        def __len__(self): return len(self._y)
+
+        def __len__(self):
+            return len(self._y)
+
         def __getitem__(self, i):
             x = torch.from_numpy(np.array(self._X[i], dtype=np.float32)).unsqueeze(0)
             return x, self._y[i]
-    train_loader = DataLoader(LOBDataset(X_tr_w, y_tr_w), batch_size=batch_size,
-                              shuffle=True,  pin_memory=True, num_workers=2)
-    test_loader  = DataLoader(LOBDataset(X_te_w, y_te_w), batch_size=batch_size,
-                              shuffle=False, pin_memory=True, num_workers=2)
+
+    train_loader = DataLoader(
+        LOBDataset(X_tr_w, y_tr_w),
+        batch_size=batch_size,
+        shuffle=True,
+        pin_memory=True,
+        num_workers=2,
+    )
+    test_loader = DataLoader(
+        LOBDataset(X_te_w, y_te_w),
+        batch_size=batch_size,
+        shuffle=False,
+        pin_memory=True,
+        num_workers=2,
+    )
     n = len(y_tr_w)
     counts = np.bincount(y_tr_w, minlength=3)
     class_weights = torch.tensor(n / (3.0 * counts), dtype=torch.float32)
     return train_loader, test_loader, class_weights
+
 
 # ── Model variants ────────────────────────────────────────────────────────────
 class CNNBlock(nn.Module):
@@ -146,50 +175,72 @@ class CNNBlock(nn.Module):
         super().__init__()
         self.layers = nn.Sequential(
             nn.Conv2d(1, 32, kernel_size=(1, 2), stride=(1, 2)),
-            nn.LeakyReLU(0.01), nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.01),
+            nn.BatchNorm2d(32),
             nn.Conv2d(32, 32, kernel_size=(4, 1)),
-            nn.LeakyReLU(0.01), nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.01),
+            nn.BatchNorm2d(32),
             nn.Conv2d(32, 32, kernel_size=(4, 1)),
-            nn.LeakyReLU(0.01), nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.01),
+            nn.BatchNorm2d(32),
         )
-    def forward(self, x): return self.layers(x)
+
+    def forward(self, x):
+        return self.layers(x)
+
 
 class InceptionModule(nn.Module):
     def __init__(self):
         super().__init__()
         self.branch_a = nn.Sequential(
-            nn.Conv2d(32, 64, (1,1)), nn.LeakyReLU(0.01), nn.BatchNorm2d(64),
-            nn.Conv2d(64, 64, (3,1), padding=(1,0)), nn.LeakyReLU(0.01), nn.BatchNorm2d(64),
+            nn.Conv2d(32, 64, (1, 1)),
+            nn.LeakyReLU(0.01),
+            nn.BatchNorm2d(64),
+            nn.Conv2d(64, 64, (3, 1), padding=(1, 0)),
+            nn.LeakyReLU(0.01),
+            nn.BatchNorm2d(64),
         )
         self.branch_b = nn.Sequential(
-            nn.Conv2d(32, 64, (1,1)), nn.LeakyReLU(0.01), nn.BatchNorm2d(64),
-            nn.Conv2d(64, 64, (5,1), padding=(2,0)), nn.LeakyReLU(0.01), nn.BatchNorm2d(64),
+            nn.Conv2d(32, 64, (1, 1)),
+            nn.LeakyReLU(0.01),
+            nn.BatchNorm2d(64),
+            nn.Conv2d(64, 64, (5, 1), padding=(2, 0)),
+            nn.LeakyReLU(0.01),
+            nn.BatchNorm2d(64),
         )
         self.branch_c = nn.Sequential(
-            nn.MaxPool2d((3,1), stride=(1,1), padding=(1,0)),
-            nn.Conv2d(32, 64, (1,1)), nn.LeakyReLU(0.01), nn.BatchNorm2d(64),
+            nn.MaxPool2d((3, 1), stride=(1, 1), padding=(1, 0)),
+            nn.Conv2d(32, 64, (1, 1)),
+            nn.LeakyReLU(0.01),
+            nn.BatchNorm2d(64),
         )
+
     def forward(self, x):
         return torch.cat([self.branch_a(x), self.branch_b(x), self.branch_c(x)], dim=1)
+
 
 class CNNOnlyModel(nn.Module):
     def __init__(self, num_classes=3):
         super().__init__()
         self.cnn = CNNBlock()
-        self.fc  = nn.Linear(32 * 94 * 20, num_classes)
+        self.fc = nn.Linear(32 * 94 * 20, num_classes)
+
     def forward(self, x):
         return self.fc(self.cnn(x).flatten(start_dim=1))
+
 
 class CNNInceptionModel(nn.Module):
     def __init__(self, num_classes=3):
         super().__init__()
-        self.cnn       = CNNBlock()
+        self.cnn = CNNBlock()
         self.inception = InceptionModule()
-        self.gap       = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc        = nn.Linear(192, num_classes)
+        self.gap = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(192, num_classes)
+
     def forward(self, x):
         x = self.inception(self.cnn(x))
         return self.fc(self.gap(x).flatten(start_dim=1))
+
 
 # ── Training helpers ──────────────────────────────────────────────────────────
 def train_one_epoch(model, loader, optimizer, criterion):
@@ -201,8 +252,10 @@ def train_one_epoch(model, loader, optimizer, criterion):
         loss = criterion(model(x), y)
         loss.backward()
         optimizer.step()
-        total += loss.item(); n += 1
+        total += loss.item()
+        n += 1
     return total / n
+
 
 def validate(model, loader, criterion):
     model.eval()
@@ -211,10 +264,12 @@ def validate(model, loader, criterion):
         for x, y in loader:
             x, y = x.to(device), y.to(device)
             logits = model(x)
-            total += criterion(logits, y).item(); n += 1
+            total += criterion(logits, y).item()
+            n += 1
             preds.extend(logits.argmax(1).cpu().tolist())
             labels.extend(y.cpu().tolist())
     return total / n, f1_score(labels, preds, average="macro", zero_division=0)
+
 
 # ── Main ablation loop ────────────────────────────────────────────────────────
 Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
@@ -225,7 +280,7 @@ train_loader, test_loader, class_weights = get_dataloaders(
 criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
 
 variants = [
-    ("CNN only",        CNNOnlyModel()),
+    ("CNN only", CNNOnlyModel()),
     ("CNN + Inception", CNNInceptionModel()),
 ]
 
@@ -238,21 +293,26 @@ for name, model in variants:
     set_seed(CFG["seed"])
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=CFG["lr"], eps=CFG["adam_eps"])
-    ckpt_path = Path(OUTPUT_DIR) / f"ablation_{name.lower().replace(' ', '_').replace('+', 'plus')}_k{K}.pt"
+    ckpt_path = (
+        Path(OUTPUT_DIR) / f"ablation_{name.lower().replace(' ', '_').replace('+', 'plus')}_k{K}.pt"
+    )
 
     best_f1, no_improve = -1.0, 0
 
     for epoch in range(1, CFG["epochs"] + 1):
-        train_loss       = train_one_epoch(model, train_loader, optimizer, criterion)
+        train_loss = train_one_epoch(model, train_loader, optimizer, criterion)
         val_loss, val_f1 = validate(model, test_loader, criterion)
 
-        print(f"  Epoch {epoch:3d}/{CFG['epochs']}  "
-              f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  val_f1={val_f1:.4f}")
+        print(
+            f"  Epoch {epoch:3d}/{CFG['epochs']}  "
+            f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  val_f1={val_f1:.4f}"
+        )
 
         if val_f1 > best_f1:
             best_f1, no_improve = val_f1, 0
-            torch.save({"model_state": model.state_dict(), "epoch": epoch, "val_f1": val_f1},
-                       ckpt_path)
+            torch.save(
+                {"model_state": model.state_dict(), "epoch": epoch, "val_f1": val_f1}, ckpt_path
+            )
         else:
             no_improve += 1
             if no_improve >= CFG["patience"]:
@@ -264,9 +324,9 @@ for name, model in variants:
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 full_f1 = results["Full DeepLOB"]
-print("\n" + "="*50)
+print("\n" + "=" * 50)
 print("ABLATION RESULTS")
-print("="*50)
+print("=" * 50)
 print(f"{'Model':<18} {'Macro F1':>9} {'Δ vs Full':>10}")
 print("-" * 40)
 for name in ["CNN only", "CNN + Inception", "Full DeepLOB"]:
