@@ -3,6 +3,7 @@
 All tests use mocks — no checkpoint files or GPU required.
 """
 
+import copy
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,6 +24,14 @@ def client():
     with patch("deeplob.serve._load_model_from_dir"):
         with TestClient(app) as c:
             yield c
+
+
+@pytest.fixture
+def restore_state():
+    """Snapshot serve_module.state before a test and restore it afterward."""
+    original = copy.copy(serve_module.state)
+    yield serve_module.state
+    serve_module.state.__dict__.update(original.__dict__)
 
 
 @pytest.fixture
@@ -67,14 +76,10 @@ def test_health_returns_ok(client):
     assert "device" in data
 
 
-def test_health_device_unknown_when_not_loaded(client):
-    old_device = serve_module._device
-    serve_module._device = None
-    try:
-        resp = client.get("/health")
-        assert resp.json()["device"] == "unknown"
-    finally:
-        serve_module._device = old_device
+def test_health_device_unknown_when_not_loaded(client, restore_state):
+    restore_state.device = None
+    resp = client.get("/health")
+    assert resp.json()["device"] == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -82,14 +87,10 @@ def test_health_device_unknown_when_not_loaded(client):
 # ---------------------------------------------------------------------------
 
 
-def test_predict_503_when_model_not_loaded(client):
-    old_model = serve_module._model
-    serve_module._model = None
-    try:
-        resp = client.post("/predict", json={"lob_snapshot": [0.1] * 40})
-        assert resp.status_code == 503
-    finally:
-        serve_module._model = old_model
+def test_predict_503_when_model_not_loaded(client, restore_state):
+    restore_state.model = None
+    resp = client.post("/predict", json={"lob_snapshot": [0.1] * 40})
+    assert resp.status_code == 503
 
 
 # ---------------------------------------------------------------------------
@@ -97,48 +98,28 @@ def test_predict_503_when_model_not_loaded(client):
 # ---------------------------------------------------------------------------
 
 
-def test_predict_returns_correct_structure(client, mock_model):
-    old_model, old_device, old_scaler = (
-        serve_module._model,
-        serve_module._device,
-        serve_module._scaler,
-    )
-    serve_module._model = mock_model
-    serve_module._device = torch.device("cpu")
-    serve_module._scaler = None
-    try:
-        resp = client.post("/predict", json={"lob_snapshot": [0.1] * 40})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "direction" in data
-        assert "confidence" in data
-        assert "probabilities" in data
-        assert len(data["probabilities"]) == 3
-        assert 0 <= data["direction"] <= 2
-        assert 0.0 <= data["confidence"] <= 1.0
-    finally:
-        serve_module._model = old_model
-        serve_module._device = old_device
-        serve_module._scaler = old_scaler
+def test_predict_returns_correct_structure(client, mock_model, restore_state):
+    restore_state.model = mock_model
+    restore_state.device = torch.device("cpu")
+    restore_state.scaler = None
+    resp = client.post("/predict", json={"lob_snapshot": [0.1] * 40})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "direction" in data
+    assert "confidence" in data
+    assert "probabilities" in data
+    assert len(data["probabilities"]) == 3
+    assert 0 <= data["direction"] <= 2
+    assert 0.0 <= data["confidence"] <= 1.0
 
 
-def test_predict_direction_matches_argmax(client, mock_model):
+def test_predict_direction_matches_argmax(client, mock_model, restore_state):
     # logits [0.1, 0.7, 0.2] → argmax index 1
-    old_model, old_device, old_scaler = (
-        serve_module._model,
-        serve_module._device,
-        serve_module._scaler,
-    )
-    serve_module._model = mock_model
-    serve_module._device = torch.device("cpu")
-    serve_module._scaler = None
-    try:
-        resp = client.post("/predict", json={"lob_snapshot": [0.0] * 40})
-        assert resp.json()["direction"] == 1
-    finally:
-        serve_module._model = old_model
-        serve_module._device = old_device
-        serve_module._scaler = old_scaler
+    restore_state.model = mock_model
+    restore_state.device = torch.device("cpu")
+    restore_state.scaler = None
+    resp = client.post("/predict", json={"lob_snapshot": [0.0] * 40})
+    assert resp.json()["direction"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -146,28 +127,18 @@ def test_predict_direction_matches_argmax(client, mock_model):
 # ---------------------------------------------------------------------------
 
 
-def test_predict_applies_scaler_when_present(client, mock_model):
+def test_predict_applies_scaler_when_present(client, mock_model, restore_state):
     import numpy as np
 
-    old_model, old_device, old_scaler = (
-        serve_module._model,
-        serve_module._device,
-        serve_module._scaler,
-    )
     mock_scaler = MagicMock()
     mock_scaler.transform.return_value = np.ones((1, 40), dtype=np.float32)
 
-    serve_module._model = mock_model
-    serve_module._device = torch.device("cpu")
-    serve_module._scaler = mock_scaler
-    try:
-        resp = client.post("/predict", json={"lob_snapshot": [0.1] * 40})
-        assert resp.status_code == 200
-        mock_scaler.transform.assert_called_once()
-    finally:
-        serve_module._model = old_model
-        serve_module._device = old_device
-        serve_module._scaler = old_scaler
+    restore_state.model = mock_model
+    restore_state.device = torch.device("cpu")
+    restore_state.scaler = mock_scaler
+    resp = client.post("/predict", json={"lob_snapshot": [0.1] * 40})
+    assert resp.status_code == 200
+    mock_scaler.transform.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +196,7 @@ def test_load_model_loads_scaler_when_present(tmp_path):
         patch("builtins.open", MagicMock()),
     ):
         _load_model_from_dir(10, str(tmp_path))
-        assert serve_module._scaler is mock_scaler
+        assert serve_module.state.scaler is mock_scaler
 
 
 def test_load_model_warns_when_scaler_missing(tmp_path):

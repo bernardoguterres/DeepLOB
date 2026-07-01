@@ -6,6 +6,7 @@ import pickle
 import sys
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -48,14 +49,18 @@ def setup_logging() -> None:
     root.addHandler(handler)
 
 
-# ---------------------------------------------------------------------------
-# Global inference state (set before uvicorn.run() in __main__)
-# ---------------------------------------------------------------------------
-_model: Optional[DeepLOB] = None
-_scaler = None
-_device: Optional[torch.device] = None
-_k: int = 10
-_checkpoint_dir: str = "outputs/"
+@dataclass
+class ServerState:
+    """Mutable inference state, set before uvicorn.run() and during lifespan startup."""
+
+    model: Optional[DeepLOB] = None
+    scaler: object = None
+    device: Optional[torch.device] = None
+    k: int = 10
+    checkpoint_dir: str = "outputs/"
+
+
+state = ServerState()
 
 
 # ---------------------------------------------------------------------------
@@ -86,22 +91,20 @@ class PredictResponse(BaseModel):
 
 
 def _load_model_from_dir(k: int, checkpoint_dir: str) -> None:
-    global _model, _scaler, _device
-
     ckpt_path = Path(checkpoint_dir) / f"best_model_k{k}.pt"
     if not ckpt_path.exists():
         raise RuntimeError(f"Checkpoint not found: {ckpt_path}")
 
-    _device = get_device()
+    state.device = get_device()
 
     ckpt = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
 
     # Infer hidden_size from the saved FC weight (num_classes × hidden_size).
     hidden_size = ckpt["model_state"]["fc.weight"].shape[1]
-    _model = DeepLOB(hidden_size=hidden_size)
-    _model.load_state_dict(ckpt["model_state"])
-    _model.to(_device)
-    _model.eval()
+    state.model = DeepLOB(hidden_size=hidden_size)
+    state.model.load_state_dict(ckpt["model_state"])
+    state.model.to(state.device)
+    state.model.eval()
 
     logger.info(
         "Loaded DeepLOB k=%d from %s (epoch=%d val_f1=%.4f) on %s",
@@ -109,13 +112,13 @@ def _load_model_from_dir(k: int, checkpoint_dir: str) -> None:
         ckpt_path,
         ckpt.get("epoch", -1),
         ckpt.get("val_f1", 0.0),
-        _device,
+        state.device,
     )
 
     scaler_path = Path(checkpoint_dir) / f"scaler_k{k}.pkl"
     if scaler_path.exists():
         with open(scaler_path, "rb") as f:
-            _scaler = pickle.load(f)
+            state.scaler = pickle.load(f)
         logger.info("Loaded StandardScaler from %s", scaler_path)
     else:
         logger.warning(
@@ -131,7 +134,7 @@ def _load_model_from_dir(k: int, checkpoint_dir: str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _load_model_from_dir(_k, _checkpoint_dir)
+    _load_model_from_dir(state.k, state.checkpoint_dir)
     yield
 
 
@@ -146,22 +149,22 @@ async def predict(request: PredictRequest) -> PredictResponse:
     the 100-step window the model expects, then returns the predicted
     direction class and softmax confidence.
     """
-    if _model is None:
+    if state.model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
     t0 = time.monotonic()
 
     features = np.array(request.lob_snapshot, dtype=np.float32)  # (40,)
 
-    if _scaler is not None:
-        features = _scaler.transform(features.reshape(1, -1)).reshape(-1).astype(np.float32)
+    if state.scaler is not None:
+        features = state.scaler.transform(features.reshape(1, -1)).reshape(-1).astype(np.float32)
 
     # Tile single snapshot to fill the 100-event window the model requires.
     window = np.tile(features, (100, 1))  # (100, 40)
-    x = torch.from_numpy(window).unsqueeze(0).unsqueeze(0).to(_device)  # (1, 1, 100, 40)
+    x = torch.from_numpy(window).unsqueeze(0).unsqueeze(0).to(state.device)  # (1, 1, 100, 40)
 
     with torch.no_grad():
-        logits = _model(x)  # (1, 3)
+        logits = state.model(x)  # (1, 3)
         probs = F.softmax(logits, dim=-1).squeeze(0)  # (3,)
 
     probs_list: list[float] = probs.cpu().tolist()
@@ -188,8 +191,8 @@ async def health() -> dict:
     """Health check endpoint."""
     return {
         "status": "ok",
-        "model": f"deeplob_k{_k}",
-        "device": str(_device) if _device is not None else "unknown",
+        "model": f"deeplob_k{state.k}",
+        "device": str(state.device) if state.device is not None else "unknown",
     }
 
 
@@ -206,8 +209,8 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8001)
     args = parser.parse_args()
 
-    _k = args.k
-    _checkpoint_dir = args.checkpoint_dir
+    state.k = args.k
+    state.checkpoint_dir = args.checkpoint_dir
 
     setup_logging()
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info")
