@@ -13,6 +13,7 @@ import torch
 
 from deeplob.dataset import (
     LOBDataset,
+    load_fi2010_all_k,
     load_fi2010_with_boundaries,
     make_windows,
     normalise,
@@ -273,6 +274,73 @@ def test_lob_dataset_len(small_X_y):
 
 # ---------------------------------------------------------------------------
 # 16. get_dataloaders — integration (synthetic data, real pipeline)
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# 17. load_fi2010_with_boundaries — corrupt .npy file raises OSError
+# ---------------------------------------------------------------------------
+
+
+def test_load_corrupt_npy_file_raises_oserror(tmp_path):
+    """A malformed .npy file must be wrapped in an OSError, not raise raw ValueError."""
+    bad_file = tmp_path / "day_01.npy"
+    # Valid .npy extension but not valid npy binary content.
+    bad_file.write_bytes(b"not a real npy file")
+
+    with pytest.raises(OSError, match="Failed to load"):
+        load_fi2010_with_boundaries(str(tmp_path), k=1)
+
+
+# ---------------------------------------------------------------------------
+# 18. load_fi2010_all_k — returns features + all five horizons in one pass
+# ---------------------------------------------------------------------------
+
+
+def test_load_fi2010_all_k_returns_all_horizons(synthetic_day_files):
+    """load_fi2010_all_k must return X plus a dict with keys for all 5 horizons."""
+    X, y_by_k, boundaries = load_fi2010_all_k(synthetic_day_files)
+
+    assert X.shape == (50_000, 40), f"Expected X shape (50000, 40), got {X.shape}"
+    assert set(y_by_k.keys()) == {1, 2, 3, 5, 10}, f"Unexpected horizon keys: {y_by_k.keys()}"
+    for k, y in y_by_k.items():
+        assert len(y) == 50_000, f"Horizon k={k}: expected 50000 labels, got {len(y)}"
+        assert set(np.unique(y)) <= {0, 1, 2}, f"Horizon k={k}: labels out of range {np.unique(y)}"
+    assert boundaries[-1] == 50_000, f"Expected boundaries[-1] == 50000, got {boundaries[-1]}"
+
+
+def test_load_fi2010_all_k_matches_single_k_load(synthetic_day_files):
+    """load_fi2010_all_k's k=1 labels must exactly match a direct k=1 load."""
+    X_single, y_single, _ = load_fi2010_with_boundaries(synthetic_day_files, k=1)
+    X_all, y_by_k, _ = load_fi2010_all_k(synthetic_day_files)
+
+    np.testing.assert_array_equal(X_single, X_all)
+    np.testing.assert_array_equal(y_single, y_by_k[1])
+
+
+def test_load_fi2010_all_k_corrupt_npy_file_raises_oserror(tmp_path):
+    """A malformed .npy file must be wrapped in an OSError, not raise raw ValueError."""
+    bad_file = tmp_path / "day_01.npy"
+    bad_file.write_bytes(b"not a real npy file")
+
+    with pytest.raises(OSError, match="Failed to load"):
+        load_fi2010_all_k(str(tmp_path))
+
+
+def test_load_fi2010_all_k_data_dir_not_found():
+    """load_fi2010_all_k raises FileNotFoundError for a non-existent directory."""
+    with pytest.raises(FileNotFoundError, match="data_dir does not exist"):
+        load_fi2010_all_k("/nonexistent/path/to/data")
+
+
+def test_load_fi2010_all_k_no_npy_files(tmp_path):
+    """load_fi2010_all_k raises FileNotFoundError when directory has no .npy files."""
+    with pytest.raises(FileNotFoundError, match="No .npy files found"):
+        load_fi2010_all_k(str(tmp_path))
+
+
+# ---------------------------------------------------------------------------
+# 19. get_dataloaders — integration (synthetic data, real pipeline)
 # ---------------------------------------------------------------------------
 
 

@@ -7,10 +7,12 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 import torch
 
 from deeplob.ablation import CNNInceptionModel, CNNOnlyModel, _ablation_table, run_ablation
 from deeplob.model import DeepLOB
+from deeplob.utils import save_checkpoint
 
 # ---------------------------------------------------------------------------
 # 1. All three ablation models produce correct output shape
@@ -133,3 +135,114 @@ def test_run_ablation_saves_json(tmp_path, tiny_loaders):
     # Each variant ran for 2 epochs, first epoch improved → best_val_f1 = 0.70
     for name, f1 in data["macro_f1"].items():
         assert f1 == 0.70, f"{name}: expected best_val_f1=0.70, got {f1}"
+
+
+# ---------------------------------------------------------------------------
+# 4. run_ablation — reuses a pretrained checkpoint for Full DeepLOB
+# ---------------------------------------------------------------------------
+
+
+def test_run_ablation_reuses_pretrained_checkpoint(tmp_path, tiny_loaders):
+    """When pretrained_dir/best_model_k{k}.pt exists, Full DeepLOB must reuse its
+    saved val_f1 instead of retraining from scratch.
+    """
+    train_loader, test_loader, class_weights = tiny_loaders
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "seed: 42\n"
+        "model:\n"
+        "  hidden_size: 16\n"
+        "  lstm_layers: 1\n"
+        "training:\n"
+        "  lr: 0.001\n"
+        "  batch_size: 16\n"
+        "  window: 100\n"
+        "  train_days: 7\n"
+        "  epochs: 2\n"
+        "  patience: 1\n"
+    )
+
+    pretrained_dir = tmp_path / "pretrained"
+    pretrained_dir.mkdir()
+    pretrained_model = DeepLOB(hidden_size=16, num_lstm_layers=1)
+    optimizer = torch.optim.Adam(pretrained_model.parameters())
+    save_checkpoint(
+        pretrained_model,
+        optimizer,
+        epoch=42,
+        val_f1=0.9123,
+        path=str(pretrained_dir / "best_model_k10.pt"),
+    )
+
+    output_dir = str(tmp_path / "ablation")
+
+    with (
+        patch(
+            "deeplob.ablation.get_dataloaders",
+            return_value=(train_loader, test_loader, class_weights),
+        ),
+        patch("deeplob.train.train_one_epoch", return_value=0.5),
+        patch("deeplob.train.validate", return_value=(0.5, 0.70)),
+    ):
+        run_ablation(
+            str(config_path),
+            "data/raw/",
+            k=10,
+            output_dir=output_dir,
+            pretrained_dir=str(pretrained_dir),
+        )
+
+    results_path = Path(output_dir) / "ablation_results.json"
+    with results_path.open() as fh:
+        data = json.load(fh)
+
+    # Full DeepLOB must report the pretrained checkpoint's val_f1 (0.9123),
+    # not the mocked training val_f1 (0.70), proving retraining was skipped.
+    assert data["macro_f1"]["Full DeepLOB"] == pytest.approx(0.9123)
+    # The other two variants were still trained from scratch.
+    assert data["macro_f1"]["CNN only"] == pytest.approx(0.70)
+    assert data["macro_f1"]["CNN + Inception"] == pytest.approx(0.70)
+
+
+# ---------------------------------------------------------------------------
+# 5. run_ablation — results-save failure is logged, not raised
+# ---------------------------------------------------------------------------
+
+
+def test_run_ablation_handles_results_save_failure(tmp_path, tiny_loaders, capsys):
+    """A failure while writing ablation_results.json must be caught and printed
+    as a warning rather than propagating out of run_ablation.
+    """
+    train_loader, test_loader, class_weights = tiny_loaders
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "seed: 42\n"
+        "model:\n"
+        "  hidden_size: 16\n"
+        "  lstm_layers: 1\n"
+        "training:\n"
+        "  lr: 0.001\n"
+        "  batch_size: 16\n"
+        "  window: 100\n"
+        "  train_days: 7\n"
+        "  epochs: 1\n"
+        "  patience: 1\n"
+    )
+
+    output_dir = str(tmp_path / "ablation")
+
+    with (
+        patch(
+            "deeplob.ablation.get_dataloaders",
+            return_value=(train_loader, test_loader, class_weights),
+        ),
+        patch("deeplob.train.train_one_epoch", return_value=0.5),
+        patch("deeplob.train.validate", return_value=(0.5, 0.70)),
+        patch("deeplob.ablation.json.dump", side_effect=OSError("disk full")),
+    ):
+        run_ablation(str(config_path), "data/raw/", k=10, output_dir=output_dir, pretrained_dir="")
+
+    captured = capsys.readouterr()
+    assert "Warning: failed to save ablation results" in captured.out

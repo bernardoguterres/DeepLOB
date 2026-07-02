@@ -129,6 +129,8 @@ curl -X POST http://localhost:8001/predict \
 
 ### 9. Tests
 
+100 tests, 97% coverage.
+
 ```bash
 pytest tests/ -v --cov=deeplob
 ```
@@ -241,12 +243,13 @@ DeepLOB/
 │   └── serve.py         # FastAPI inference server (POST /predict, GET /health)
 ├── tests/
 │   ├── conftest.py      # shared fixtures
-│   ├── test_dataset.py  # 16 tests
+│   ├── test_dataset.py  # 22 tests
 │   ├── test_model.py    # 9 tests
-│   ├── test_train.py    # 10 tests
+│   ├── test_train.py    # 21 tests
 │   ├── test_evaluate.py # 8 tests
-│   ├── test_ablation.py # 1 test
-│   └── test_explain.py  # 6 tests
+│   ├── test_ablation.py # 7 tests
+│   ├── test_serve.py    # 17 tests
+│   └── test_explain.py  # 16 tests
 ├── data/
 │   ├── download.py      # instructions, extraction, verification
 │   └── raw/             # FI-2010 .npy files (not tracked)

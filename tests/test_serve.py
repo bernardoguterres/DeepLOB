@@ -4,6 +4,7 @@ All tests use mocks — no checkpoint files or GPU required.
 """
 
 import copy
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +12,7 @@ import torch
 from fastapi.testclient import TestClient
 
 import deeplob.serve as serve_module
-from deeplob.serve import PredictRequest, _load_model_from_dir, app
+from deeplob.serve import PredictRequest, _load_model_from_dir, app, setup_logging
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -52,14 +53,10 @@ def test_predict_request_accepts_40_features():
     assert len(req.lob_snapshot) == 40
 
 
-def test_predict_request_rejects_wrong_length():
+@pytest.mark.parametrize("length", [10, 0], ids=["wrong_length", "empty"])
+def test_predict_request_rejects_invalid_length(length):
     with pytest.raises(Exception):
-        PredictRequest(lob_snapshot=[0.5] * 10)
-
-
-def test_predict_request_rejects_empty():
-    with pytest.raises(Exception):
-        PredictRequest(lob_snapshot=[])
+        PredictRequest(lob_snapshot=[0.5] * length)
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +194,56 @@ def test_load_model_loads_scaler_when_present(tmp_path):
     ):
         _load_model_from_dir(10, str(tmp_path))
         assert serve_module.state.scaler is mock_scaler
+
+
+# ---------------------------------------------------------------------------
+# 8. setup_logging — configures the root logger from LOG_LEVEL
+# ---------------------------------------------------------------------------
+
+
+def test_setup_logging_configures_root_logger_default_level(monkeypatch):
+    """With no LOG_LEVEL env var, root logger must be configured at INFO."""
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    root = logging.getLogger()
+    original_handlers = root.handlers[:]
+    original_level = root.level
+    try:
+        setup_logging()
+        assert root.level == logging.INFO
+        assert len(root.handlers) == 1, "setup_logging must install exactly one handler"
+        assert isinstance(root.handlers[0], logging.StreamHandler)
+    finally:
+        root.handlers[:] = original_handlers
+        root.setLevel(original_level)
+
+
+def test_setup_logging_respects_log_level_env_var(monkeypatch):
+    """LOG_LEVEL=DEBUG must set the root logger to DEBUG."""
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    root = logging.getLogger()
+    original_handlers = root.handlers[:]
+    original_level = root.level
+    try:
+        setup_logging()
+        assert root.level == logging.DEBUG
+    finally:
+        root.handlers[:] = original_handlers
+        root.setLevel(original_level)
+
+
+def test_setup_logging_replaces_existing_handlers(monkeypatch):
+    """A second call must not accumulate duplicate handlers."""
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    root = logging.getLogger()
+    original_handlers = root.handlers[:]
+    original_level = root.level
+    try:
+        setup_logging()
+        setup_logging()
+        assert len(root.handlers) == 1, "Repeated calls must not accumulate handlers"
+    finally:
+        root.handlers[:] = original_handlers
+        root.setLevel(original_level)
 
 
 def test_load_model_warns_when_scaler_missing(tmp_path):
